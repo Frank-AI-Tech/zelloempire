@@ -1,5 +1,5 @@
 // Minimal service worker so the site is installable as PWA / "APK"
-const CACHE = 'Signor movie-dash-v1';
+const CACHE = 'Vegaz movie-dash-v1';
 self.addEventListener('install', (e) => {
   self.skipWaiting();
 });
