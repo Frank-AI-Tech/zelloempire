@@ -2191,9 +2191,15 @@ Click below to continue with your {PAYMENT_PROMPT_NAME}:"""
 
 def build_payment_keyboard(auth_url, ref, price, user_id, plans, include_subs=True):
     keyboard = []
-    keyboard.append([InlineKeyboardButton("ᴘᴀʏ ᴡɪᴛʜ ᴍ-ᴘᴇꜱᴀ 📱", callback_data=f"stk_{ref}_{price}")])
+    try:
+        bal = get_wallet_balance(user_id)
+    except Exception:
+        bal = 0
+    # Wallet first so user always sees balance + option
+    keyboard.append([InlineKeyboardButton(f"💰 Pay with Wallet ({bal} KES)", callback_data=f"pay_wallet_{ref}_{price}")])
+    keyboard.append([InlineKeyboardButton("📱 Pay with M-Pesa", callback_data=f"stk_{ref}_{price}")])
     if get_card_payment_setting():
-        keyboard.append([InlineKeyboardButton("ᴘᴀʏ ᴡɪᴛʜ ᴄᴀʀᴅ 💳", url=auth_url or "https://paystack.com/pay")])
+        keyboard.append([InlineKeyboardButton("💳 Pay with Card", url=auth_url or "https://paystack.com/pay")])
     if include_subs and get_subscription_enabled():
         keyboard.append([
             InlineKeyboardButton(f"ᴡᴇᴇᴋʟʏ ({plans['weekly']['price']} KES)", callback_data=f"sub_weekly_{user_id}"),
@@ -3583,6 +3589,75 @@ async def auto_deliver_cart(user_id: int, cart_items: list, context: ContextType
         return True
     except Exception as e:
         logger.error(f"❌ CART: Final message failed: {e}")
+        return False
+
+# ============ WALLET SYSTEM ============
+WALLET_MIN_TOPUP = 10
+
+def get_wallet_balance(user_id: int) -> int:
+    """Return user's wallet balance in KES (integer)."""
+    if not mongodb_connected or users_collection is None:
+        return 0
+    try:
+        u = users_collection.find_one({"user_id": int(user_id)}, {"wallet_balance": 1})
+        if not u:
+            return 0
+        return max(0, int(u.get("wallet_balance") or 0))
+    except Exception:
+        return 0
+
+def add_wallet_balance(user_id: int, amount: int, reason: str = "topup", ref: str = None) -> int:
+    """Credit wallet. Returns new balance."""
+    amount = int(amount or 0)
+    if amount <= 0 or users_collection is None:
+        return get_wallet_balance(user_id)
+    try:
+        users_collection.update_one(
+            {"user_id": int(user_id)},
+            {
+                "$inc": {"wallet_balance": amount},
+                "$push": {
+                    "wallet_history": {
+                        "$each": [{"type": "credit", "amount": amount, "reason": reason, "ref": ref, "at": datetime.utcnow()}],
+                        "$slice": -50,
+                    }
+                },
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+            upsert=True,
+        )
+        return get_wallet_balance(user_id)
+    except Exception as e:
+        logger.error(f"add_wallet_balance: {e}")
+        return get_wallet_balance(user_id)
+
+def deduct_wallet_balance(user_id: int, amount: int, reason: str = "purchase", ref: str = None) -> bool:
+    """Debit wallet if enough balance. Returns True on success."""
+    amount = int(amount or 0)
+    if amount <= 0:
+        return True
+    if users_collection is None:
+        return False
+    try:
+        bal = get_wallet_balance(user_id)
+        if bal < amount:
+            return False
+        res = users_collection.update_one(
+            {"user_id": int(user_id), "wallet_balance": {"$gte": amount}},
+            {
+                "$inc": {"wallet_balance": -amount},
+                "$push": {
+                    "wallet_history": {
+                        "$each": [{"type": "debit", "amount": amount, "reason": reason, "ref": ref, "at": datetime.utcnow()}],
+                        "$slice": -50,
+                    }
+                },
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+        )
+        return res.modified_count > 0
+    except Exception as e:
+        logger.error(f"deduct_wallet_balance: {e}")
         return False
 
 # ============ CART SYSTEM ============
@@ -5183,7 +5258,9 @@ async def confronterking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Unauthorized.")
         return
     
-    admin_confronter_king_sessions[admin.id] = init_confronter_king_session(admin.id)
+    session = init_confronter_king_session(admin.id)
+    session["post_mode"] = "parts"  # individual PRT buttons
+    admin_confronter_king_sessions[admin.id] = session
     
     channels = []
     if PUBLIC_CHANNEL_USERNAME:
@@ -5208,22 +5285,80 @@ async def confronterking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(
         f"👑 <b>Confronter King Upload</b>\n\n"
-        f"<b>For Series with Parts</b>\n"
-        f"• Thor 1-3 → Part 1, Part 2, Part 3\n"
-        f"• Prison Break 1-42 → Part 1 (FREE), Part 2 (FREE)\n"
-        f"• Breaking Bad 12 → Part 12\n\n"
-        f"<b>FREE Parts:</b>\n"
-        f"• Series 1-5: Part 1 is FREE\n"
-        f"• Series 1-10+: Part 1 & 2 are FREE\n\n"
-        f"<b>Get All Once Discount:</b>\n"
-        f"• 10+ series: -20 KES\n"
-        f"• 20+ series: -40 KES\n\n"
+        f"<b>For Series with Parts</b> (PRT 1, PRT 2, …)\n"
+        f"Free: Part 1 (≤10 parts) or Part 1&2 (>10)\n\n"
         f"<b>Step 1: Select Channel</b>\n"
         f"<b>Step 2: Select Price</b>\n"
         f"<b>Step 3: Choose Prefix</b>\n"
         f"<b>Step 4: Send Poster + Videos</b>",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML
+    )
+
+
+async def confronterking2_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Grouped parts: PRT 1-2, PRT 3-4 … user chooses group size 2–20."""
+    admin = update.effective_user
+    if admin.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    session = init_confronter_king_session(admin.id)
+    session["post_mode"] = "grouped"
+    session["group_size"] = None
+    admin_confronter_king_sessions[admin.id] = session
+    # Ask group size first (2–20), 4 buttons per row
+    rows = []
+    nums = list(range(2, 21))
+    for i in range(0, len(nums), 4):
+        rows.append([InlineKeyboardButton(str(n), callback_data=f"ck2_group_{n}") for n in nums[i:i+4]])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="ck_cancel")])
+    await update.message.reply_text(
+        "👑 <b>Confronter King 2 — Grouped Parts</b>\n\n"
+        "Choose how many parts per button group.\n"
+        "Example: <b>2</b> → PRT 1-2, PRT 3-4\n"
+        "Example: <b>3</b> → PRT 1-3, PRT 4-6\n\n"
+        "Or type a number 2–20.",
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def confronterking3_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Large series: channel shows only title + 'Click here to get it'. Parts chosen in bot."""
+    admin = update.effective_user
+    if admin.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    session = init_confronter_king_session(admin.id)
+    session["post_mode"] = "large"
+    admin_confronter_king_sessions[admin.id] = session
+    channels = []
+    if PUBLIC_CHANNEL_USERNAME:
+        channels.append({"name": f"📢 {PUBLIC_CHANNEL_USERNAME}", "id": PUBLIC_CHANNEL_USERNAME})
+    if MY_CHANNEL:
+        channels.append({"name": f"📢 {MY_CHANNEL}", "id": MY_CHANNEL})
+    if CHANNEL_ID:
+        channels.append({"name": f"📢 Channel ID: {CHANNEL_ID}", "id": str(CHANNEL_ID)})
+    if channels_collection is not None:
+        for ch in channels_collection.find():
+            channels.append({"name": f"📢 {ch.get('title', 'Channel')}", "id": str(ch.get('channel_id'))})
+    keyboard = []
+    for ch in channels[:10]:
+        keyboard.append([InlineKeyboardButton(ch["name"], callback_data=f"ck_channel_{ch['id']}")])
+    keyboard.append([InlineKeyboardButton("💰 0 KES (FREE)", callback_data="ck_price_0")])
+    keyboard.append([InlineKeyboardButton("💰 10 KES", callback_data="ck_price_10")])
+    keyboard.append([InlineKeyboardButton("💰 20 KES", callback_data="ck_price_20")])
+    keyboard.append([InlineKeyboardButton("💰 Send Your Price", callback_data="ck_price_custom")])
+    keyboard.append([InlineKeyboardButton("💰 Default Price", callback_data="ck_price_default")])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="ck_cancel")])
+    await update.message.reply_text(
+        "👑 <b>Confronter King 3 — Large Series</b>\n\n"
+        "Channel post: poster + title + one button <b>Click here to get it</b>.\n"
+        "In bot user types parts (e.g. <code>1,2,3</code> or <code>10, 15, 89</code>)\n"
+        "or uses grouped / paged part buttons + Get All Once.\n\n"
+        "Select channel & price, then poster + videos.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
     )
 
 async def handle_confronter_king_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5239,6 +5374,41 @@ async def handle_confronter_king_channel_callback(update: Update, context: Conte
     if data == "ck_cancel":
         admin_confronter_king_sessions.pop(admin.id, None)
         await query.edit_message_text("❌ Cancelled.")
+        return
+
+    if data.startswith("ck2_group_"):
+        try:
+            gs = int(data.replace("ck2_group_", ""))
+        except Exception:
+            gs = 2
+        session = admin_confronter_king_sessions.get(admin.id) or init_confronter_king_session(admin.id)
+        session["post_mode"] = "grouped"
+        session["group_size"] = max(2, min(20, gs))
+        admin_confronter_king_sessions[admin.id] = session
+        channels = []
+        if PUBLIC_CHANNEL_USERNAME:
+            channels.append({"name": f"📢 {PUBLIC_CHANNEL_USERNAME}", "id": PUBLIC_CHANNEL_USERNAME})
+        if MY_CHANNEL:
+            channels.append({"name": f"📢 {MY_CHANNEL}", "id": MY_CHANNEL})
+        if CHANNEL_ID:
+            channels.append({"name": f"📢 Channel ID: {CHANNEL_ID}", "id": str(CHANNEL_ID)})
+        if channels_collection is not None:
+            for ch in channels_collection.find():
+                channels.append({"name": f"📢 {ch.get('title', 'Channel')}", "id": str(ch.get('channel_id'))})
+        keyboard = []
+        for ch in channels[:10]:
+            keyboard.append([InlineKeyboardButton(ch["name"], callback_data=f"ck_channel_{ch['id']}")])
+        keyboard.append([InlineKeyboardButton("💰 0 KES (FREE)", callback_data="ck_price_0")])
+        keyboard.append([InlineKeyboardButton("💰 10 KES", callback_data="ck_price_10")])
+        keyboard.append([InlineKeyboardButton("💰 20 KES", callback_data="ck_price_20")])
+        keyboard.append([InlineKeyboardButton("💰 Send Your Price", callback_data="ck_price_custom")])
+        keyboard.append([InlineKeyboardButton("💰 Default Price", callback_data="ck_price_default")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="ck_cancel")])
+        await query.edit_message_text(
+            f"✅ Group size set to <b>{session['group_size']}</b>\n\nNow select channel & price, then poster + videos.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML,
+        )
         return
     
     if data.startswith("ck_channel_"):
@@ -5474,76 +5644,64 @@ def calculate_discount(total_parts: int, base_price: int) -> int:
     free_count = n // 5  # 5→1, 9→1, 10→2, 14→2, 15→3
     return max(0, free_count * unit)
 
-async def post_series_to_channel_with_parts(context, channel_id, poster_file_id, saved_movies, main_token, get_all_price, total_parts, upload_title, price_per_part=None):
+async def post_series_to_channel_with_parts(context, channel_id, poster_file_id, saved_movies, main_token, get_all_price, total_parts, upload_title, price_per_part=None, post_mode="parts", group_size=None):
     try:
         bot_link = f"https://t.me/{context.bot.username}?start={main_token}"
         price_text = f"{get_all_price} KES" if get_all_price > 0 else "FREE 🎁"
-        
-        part_buttons = []
-        for i, movie in enumerate(saved_movies, 1):
-            # Prefer short PRT / free label so buttons fit well
-            part_num = movie.get("part_number") or extract_part_number(movie.get("title", "") or "") or i
-            # No gift emoji on buttons — free is already stated in caption
-            clean_part = f"PRT {part_num}"
-            if len(clean_part) > 16:
-                clean_part = clean_part[:14] + "…"
-            part_buttons.append(InlineKeyboardButton(clean_part, url=f"https://t.me/{context.bot.username}?start={movie.get('token')}"))
-        
-        keyboard_rows = []
-        for i in range(0, len(part_buttons), 5):
-            row = part_buttons[i:i+5]
-            if row:
-                keyboard_rows.append(row)
-        
+        n_parts = len(saved_movies)
         discount_text = ""
         try:
-            _unit = price_per_part
-            if _unit is None:
-                _unit = 10
-            if len(saved_movies) >= 5:
-                discount = calculate_discount(len(saved_movies), int(_unit) if _unit else 10)
+            _unit = price_per_part if price_per_part is not None else 10
+            if n_parts >= 5:
+                discount = calculate_discount(n_parts, int(_unit) if _unit else 10)
                 if discount > 0:
                     discount_text = f" (💰 -{discount} KES)"
         except Exception:
             pass
-        
-        keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL {len(saved_movies)} ONCE — {price_text}{discount_text}", url=bot_link)])
-        keyboard_rows.append([InlineKeyboardButton("📢 Share Collection", url=f"https://t.me/share/url?url={bot_link}")])
-        keyboard = InlineKeyboardMarkup(keyboard_rows)
 
-        # Free parts text (Part 1 free for <=10, Part 1&2 free for >10)
-        n_parts = len(saved_movies)
-        if n_parts > 10:
-            free_txt = "🎁 Part 1 & 2 FREE — Watch free"
-        elif n_parts >= 1:
-            free_txt = "🎁 Part 1 FREE — Watch free"
+        keyboard_rows = []
+        post_mode = (post_mode or "parts").lower()
+
+        if post_mode == "large":
+            # Large series: single button only
+            keyboard_rows.append([InlineKeyboardButton("👉 Click here to get it", url=bot_link)])
+        elif post_mode == "grouped" and group_size and int(group_size) >= 2:
+            gs = max(2, min(20, int(group_size)))
+            # Group parts: PRT 1-2, PRT 3-4, ...
+            for i in range(0, n_parts, gs):
+                chunk = saved_movies[i:i+gs]
+                if not chunk:
+                    continue
+                start_p = chunk[0].get("part_number") or (i + 1)
+                end_p = chunk[-1].get("part_number") or (i + len(chunk))
+                # Deep-link first token of group; bot can expand if needed
+                tok = chunk[0].get("token") or main_token
+                label = f"PRT {start_p}-{end_p}" if start_p != end_p else f"PRT {start_p}"
+                if len(label) > 18:
+                    label = label[:16] + "…"
+                keyboard_rows.append([]) if not keyboard_rows or len(keyboard_rows[-1]) >= 4 else None
+                if not keyboard_rows or len(keyboard_rows[-1]) >= 4:
+                    keyboard_rows.append([])
+                keyboard_rows[-1].append(InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start={tok}"))
+            keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL {n_parts} ONCE — {price_text}{discount_text}", url=bot_link)])
         else:
-            free_txt = ""
-        # Unit price (each paid part)
-        unit = price_per_part
-        if unit is None:
-            try:
-                unit = int(round(float(get_all_price) / max(1, n_parts))) if get_all_price else 0
-            except Exception:
-                unit = 0
-            # Prefer stored part price from first paid movie
-            for m in saved_movies:
-                if not m.get("is_free") and m.get("price"):
-                    try:
-                        unit = int(m.get("price"))
-                        break
-                    except Exception:
-                        pass
-        unit_txt = f"{unit} KES" if unit and unit > 0 else "FREE"
-        caption = (
-            f"📦 <b>{escape_html(upload_title)}</b> 🚀 Collection ({n_parts} parts)\n"
-            f"{n_parts} parts | 💰 {price_text}\n"
-            f"💵 Each part <b>{unit_txt}</b>"
-        )
-        if free_txt:
-            caption += f"\n{free_txt}"
-        
-        # Premium animated emojis in channel post captions
+            # Default: individual PRT buttons (5 per row)
+            part_buttons = []
+            for i, movie in enumerate(saved_movies, 1):
+                part_num = movie.get("part_number") or extract_part_number(movie.get("title", "") or "") or i
+                clean_part = f"PRT {part_num}"
+                if len(clean_part) > 16:
+                    clean_part = clean_part[:14] + "…"
+                part_buttons.append(InlineKeyboardButton(clean_part, url=f"https://t.me/{context.bot.username}?start={movie.get('token')}"))
+            for i in range(0, len(part_buttons), 5):
+                row = part_buttons[i:i+5]
+                if row:
+                    keyboard_rows.append(row)
+            keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL {n_parts} ONCE — {price_text}{discount_text}", url=bot_link)])
+
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
+        # Clean caption: series title only
+        caption = f"<b>{escape_html(upload_title)}</b>"
         try:
             caption = apply_premium_emojis(caption)
         except Exception:
@@ -5675,10 +5833,17 @@ async def confronterisundefeated_cmd(update: Update, context: ContextTypes.DEFAU
             logger.error(f"confronterking mirror: {_mirror_err}")
 
     if channel_to_post and bundle_data and saved_movies:
-        await update.message.reply_text("📤 Posting to channel with part buttons...")
-        success = await post_series_to_channel_with_parts(context=context, channel_id=channel_to_post, poster_file_id=poster_file_id, saved_movies=saved_movies, main_token=main_token, get_all_price=get_all_price, total_parts=total_parts, upload_title=upload_title, price_per_part=price_per_movie)
+        _mode = (session or {}).get("post_mode") or "parts"
+        _gs = (session or {}).get("group_size")
+        await update.message.reply_text(f"📤 Posting to channel ({_mode})...")
+        success = await post_series_to_channel_with_parts(
+            context=context, channel_id=channel_to_post, poster_file_id=poster_file_id,
+            saved_movies=saved_movies, main_token=main_token, get_all_price=get_all_price,
+            total_parts=total_parts, upload_title=upload_title, price_per_part=price_per_movie,
+            post_mode=_mode, group_size=_gs,
+        )
         if success:
-            await update.message.reply_text(f"✅ Posted to channel with {len(saved_movies)} part buttons!")
+            await update.message.reply_text(f"✅ Posted to channel!")
         else:
             await update.message.reply_text("⚠️ Failed to post to channel.")
     
@@ -7195,6 +7360,24 @@ async def _handle_webhook_payment_success(reference: str, user_id: int, chat_id:
         except Exception as e:
             logger.error(f"ban unlock after pay: {e}")
         return
+    # Wallet top-up
+    payment_record = payments_collection.find_one({"reference": reference}) if payments_collection is not None else None
+    if (reference or "").startswith("wtop_") or (payment_record and (payment_record.get("is_wallet_topup") or payment_record.get("type") == "wallet_topup")):
+        try:
+            top_amt = int(payment_record.get("amount") or amount_kes or 0) if payment_record else int(amount_kes or 0)
+            new_bal = add_wallet_balance(user_id, top_amt, reason="topup", ref=reference)
+            try:
+                await application.bot.send_message(
+                    chat_id=chat_id or user_id,
+                    text=add_footer(f"✅ <b>Wallet topped up!</b>\n\n+{top_amt} KES\nNew balance: <b>{new_bal} KES</b>"),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            logger.info(f"Wallet topup user={user_id} +{top_amt} bal={new_bal}")
+        except Exception as e:
+            logger.error(f"wallet topup credit: {e}")
+        return
     if is_subscription and plan:
         create_subscription(user_id, plan, reference)
         try:
@@ -8144,6 +8327,109 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         push_nav_state(context, "search_cancelled", cancel_text, cancel_kb)
         return
 
+    if data.startswith("pay_wallet_"):
+        # pay_wallet_{ref}_{price}
+        parts = data.split("_")
+        if len(parts) < 4:
+            await query.answer("Invalid wallet payment.", show_alert=True)
+            return
+        price = int(parts[-1] or 0)
+        ref = "_".join(parts[2:-1])
+        bal = get_wallet_balance(user_id)
+        if bal < price:
+            await query.answer(f"Insufficient wallet balance ({bal} KES). Top up first.", show_alert=True)
+            topup_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💰 Top up Wallet", callback_data="wallet_topup")],
+                [InlineKeyboardButton("📱 Pay with M-Pesa instead", callback_data=f"stk_{ref}_{price}")],
+                [InlineKeyboardButton("◀️ Back", callback_data="back")],
+            ])
+            await edit_or_send_message(
+                query,
+                add_footer(f"💰 <b>Wallet Balance: {bal} KES</b>\n\nYou need <b>{price} KES</b>.\nTop up or pay with M-Pesa."),
+                reply_markup=topup_kb,
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        payment_record = payments_collection.find_one({"reference": ref}) if payments_collection is not None else None
+        if not payment_record:
+            await query.answer("Payment record not found.", show_alert=True)
+            return
+        ok = deduct_wallet_balance(user_id, price, reason="purchase", ref=ref)
+        if not ok:
+            await query.answer("Wallet deduction failed. Try again.", show_alert=True)
+            return
+        if payments_collection is not None:
+            payments_collection.update_one(
+                {"reference": ref},
+                {"$set": {"status": "success", "provider": "wallet", "completed_at": datetime.utcnow()}},
+            )
+        movie_token = payment_record.get("movie_token")
+        series_token = payment_record.get("series_token")
+        cart_tokens = payment_record.get("cart_tokens") or []
+        is_cart = bool(cart_tokens) or bool(payment_record.get("is_cart"))
+        is_subscription = bool(payment_record.get("is_subscription") or payment_record.get("type") == "subscription")
+        plan = payment_record.get("plan")
+        clear_pending_payment_tracker(user_id)
+        await query.answer("✅ Paid from wallet!", show_alert=False)
+        try:
+            if is_subscription and plan:
+                create_subscription(user_id, plan, ref)
+                await edit_or_send_message(query, add_footer(f"✅ <b>Paid from wallet!</b>\n\nSubscription activated."), parse_mode=ParseMode.HTML)
+            elif is_cart and cart_tokens:
+                await auto_deliver_cart(user_id, [{"token": t} for t in cart_tokens])
+                await edit_or_send_message(query, add_footer(f"✅ <b>Paid from wallet!</b>\n\nDelivering your cart…"), parse_mode=ParseMode.HTML)
+            elif series_token:
+                await auto_deliver_series(user_id, series_token)
+                await edit_or_send_message(query, add_footer(f"✅ <b>Paid from wallet!</b>\n\nDelivering collection…"), parse_mode=ParseMode.HTML)
+            elif movie_token:
+                await auto_deliver_movie(user_id, movie_token)
+                await edit_or_send_message(query, add_footer(f"✅ <b>Paid from wallet!</b>\n\nDelivering movie…"), parse_mode=ParseMode.HTML)
+            else:
+                await edit_or_send_message(query, add_footer("✅ Paid from wallet! Use /start to browse."), parse_mode=ParseMode.HTML)
+        except Exception as we:
+            logger.error(f"wallet deliver: {we}")
+            await edit_or_send_message(query, add_footer("✅ Payment taken from wallet. Use /mymovies if content did not arrive."), parse_mode=ParseMode.HTML)
+        return
+
+    if data == "wallet_home":
+        bal = get_wallet_balance(user_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Top up (min 10 KES)", callback_data="wallet_topup")],
+            [InlineKeyboardButton("🛒 Cart", callback_data="cart_view")],
+            [InlineKeyboardButton("◀️ Home", callback_data="back")],
+        ])
+        await edit_or_send_message(
+            query,
+            add_footer(f"💰 <b>My Wallet</b>\n\nBalance: <b>{bal} KES</b>\n\nMinimum top-up: {WALLET_MIN_TOPUP} KES.\nUse wallet balance when buying movies."),
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data == "wallet_topup":
+        context.user_data["awaiting_wallet_topup"] = True
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="wallet_home")]])
+        await edit_or_send_message(
+            query,
+            add_footer(f"💰 <b>Top up Wallet</b>\n\nSend the amount in KES (minimum {WALLET_MIN_TOPUP}).\nExample: <code>50</code> or <code>100</code>"),
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data.startswith("category_"):
+        # category_{name}_{page}
+        parts = data.split("_")
+        page = 0
+        try:
+            page = int(parts[-1])
+            cat = "_".join(parts[1:-1]) or "requested"
+        except Exception:
+            cat = "requested"
+            page = 0
+        await browse_category_movies(update, context, category=cat, page=page)
+        return
+
     if data.startswith("stk_"):
         parts = data.split("_")
         if len(parts) < 3:
@@ -8966,6 +9252,58 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     phone = (update.message.text or "").strip()
     context.user_data.pop("phone_input_handled", None)
     await human_action(context, update.effective_chat.id, ChatAction.TYPING)
+
+    # Wallet top-up amount entry
+    if context.user_data.get("awaiting_wallet_topup"):
+        context.user_data.pop("awaiting_wallet_topup", None)
+        try:
+            amount = int(re.sub(r"[^\d]", "", phone) or "0")
+        except Exception:
+            amount = 0
+        if amount < WALLET_MIN_TOPUP:
+            await update.message.reply_text(
+                add_footer(f"❌ Minimum top-up is {WALLET_MIN_TOPUP} KES. Send a higher amount or /start."),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        # Create pending payment for wallet top-up then ask M-Pesa number
+        ref = f"wtop_{user.id}_{secrets.token_hex(4)}"
+        if payments_collection is not None:
+            payments_collection.insert_one({
+                "reference": ref,
+                "user_id": user.id,
+                "amount": amount,
+                "status": "pending",
+                "type": "wallet_topup",
+                "is_wallet_topup": True,
+                "created_at": datetime.utcnow(),
+            })
+        context.user_data["pending_wallet_topup_ref"] = ref
+        context.user_data["pending_wallet_topup_amount"] = amount
+        track_pending_payment(user.id, ref)
+        active_gw = get_active_payment_gateway()
+        if pending_payhero_collection is not None:
+            pending_payhero_collection.update_one(
+                {"user_id": user.id},
+                {"$set": {
+                    "reference": ref,
+                    "payhero_ref": ref,
+                    "price": amount,
+                    "amount": amount,
+                    "status": "awaiting_phone",
+                    "provider": active_gw,
+                    "is_wallet_topup": True,
+                    "chat_id": user.id,
+                    "created_at": datetime.utcnow(),
+                }},
+                upsert=True,
+            )
+        await update.message.reply_text(
+            add_footer(build_mpesa_prompt_text(amount, extra_lines=[f"Wallet top-up {amount} KES"])),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     try:
         if await handle_pending_payment_phone_input(update, context):
             return
@@ -9599,6 +9937,25 @@ async def deliver_all_my_movies(update: Update, context: ContextTypes.DEFAULT_TY
         completion_text += f"\n⚠️ {failed} movie(s) failed to deliver."
     completion_text += f"\n\n🔥 Enjoy watching!"
     await context.bot.send_message(chat_id=user_id, text=completion_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"🎬 ʙʀᴏᴡꜱᴇ ᴀʟʟ ᴍᴏᴠɪᴇꜱ", callback_data="watch_all_movies_0")], [InlineKeyboardButton(f"🌼 ᴍᴏʀᴇ ᴍᴏᴠɪᴇꜱ", callback_data="more_movies")], [InlineKeyboardButton(f"◀ ʙᴀᴄᴋ", callback_data="back")]]), parse_mode=ParseMode.HTML)
+
+async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /wallet — show balance and top-up option """
+    user = update.effective_user
+    track_user_bg(user.id, user.username, user.first_name, user.last_name)
+    bal = get_wallet_balance(user.id)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Top up (min 10 KES)", callback_data="wallet_topup")],
+        [InlineKeyboardButton("🛒 Cart", callback_data="cart_view")],
+        [InlineKeyboardButton("◀️ Home", callback_data="back")],
+    ])
+    text = add_footer(
+        f"💰 <b>My Wallet</b>\n\n"
+        f"Balance: <b>{bal} KES</b>\n\n"
+        f"Minimum top-up: {WALLET_MIN_TOPUP} KES.\n"
+        f"Use wallet when buying — you'll see <b>Pay with Wallet</b> + balance."
+    )
+    await reply_html_safe(update.message, text, reply_markup=kb)
+
 
 async def cart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -10716,7 +11073,7 @@ async def upload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if admin.id not in ADMIN_IDS:
         await update.message.reply_text(f"❌ You are not authorized.")
         return
-    
+    context.user_data["upload_category"] = "movie"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 0 KES (FREE)", callback_data="upload_price_0")],
         [InlineKeyboardButton("💰 10 KES", callback_data="upload_price_10")],
@@ -10727,6 +11084,48 @@ async def upload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"📷 <b>Movie Upload</b>\n\n<b>Select the price for all movies:</b>\n• 0 KES (FREE)\n• 10 KES\n• 20 KES\n• Send Your Price — Enter any amount\n• Default Price — Use bot default\n\nAfter selecting, send posters and movies using the normal upload flow.", reply_markup=keyboard, parse_mode=ParseMode.HTML)
     
+    context.user_data["upload_price_selected"] = False
+
+
+async def uploadtrending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Same as /upload but category=trending."""
+    admin = update.effective_user
+    if admin.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ You are not authorized.")
+        return
+    context.user_data["upload_category"] = "trending"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 0 KES (FREE)", callback_data="upload_price_0")],
+        [InlineKeyboardButton("💰 10 KES", callback_data="upload_price_10")],
+        [InlineKeyboardButton("💰 20 KES", callback_data="upload_price_20")],
+        [InlineKeyboardButton("💰 Send Your Price", callback_data="upload_price_custom")],
+        [InlineKeyboardButton("💰 Default Price", callback_data="upload_price_default")]
+    ])
+    await update.message.reply_text(
+        "🔥 <b>Upload Trending</b>\n\nMovies go to category <b>trending</b>.\nSelect price, then poster (caption = title) + video.",
+        reply_markup=keyboard, parse_mode=ParseMode.HTML,
+    )
+    context.user_data["upload_price_selected"] = False
+
+
+async def uploadrequested_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Same as /upload but category=requested (most requested)."""
+    admin = update.effective_user
+    if admin.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ You are not authorized.")
+        return
+    context.user_data["upload_category"] = "requested"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 0 KES (FREE)", callback_data="upload_price_0")],
+        [InlineKeyboardButton("💰 10 KES", callback_data="upload_price_10")],
+        [InlineKeyboardButton("💰 20 KES", callback_data="upload_price_20")],
+        [InlineKeyboardButton("💰 Send Your Price", callback_data="upload_price_custom")],
+        [InlineKeyboardButton("💰 Default Price", callback_data="upload_price_default")]
+    ])
+    await update.message.reply_text(
+        "⭐ <b>Upload Most Requested</b>\n\nMovies go to category <b>requested</b>.\nSelect price, then poster (caption = title) + video.",
+        reply_markup=keyboard, parse_mode=ParseMode.HTML,
+    )
     context.user_data["upload_price_selected"] = False
 
 async def handle_upload_price_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10747,7 +11146,8 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        context.user_data["upload_data"] = {"movies": [], "price": 0, "category": "movie"}
+        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_data"] = {"movies": [], "price": 0, "category": cat}
         return
     
     elif data == "upload_price_10":
@@ -10757,7 +11157,8 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        context.user_data["upload_data"] = {"movies": [], "price": 10, "category": "movie"}
+        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_data"] = {"movies": [], "price": 10, "category": cat}
         return
     
     elif data == "upload_price_20":
@@ -10767,7 +11168,8 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        context.user_data["upload_data"] = {"movies": [], "price": 20, "category": "movie"}
+        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_data"] = {"movies": [], "price": 20, "category": cat}
         return
     
     elif data == "upload_price_custom":
@@ -10783,7 +11185,8 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        context.user_data["upload_data"] = {"movies": [], "price": price, "category": "movie"}
+        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_data"] = {"movies": [], "price": price, "category": cat}
         return
 
 async def handle_upload_price_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10809,7 +11212,8 @@ async def handle_upload_price_text(update: Update, context: ContextTypes.DEFAULT
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        context.user_data["upload_data"] = {"movies": [], "price": price, "category": "movie"}
+        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_data"] = {"movies": [], "price": price, "category": cat}
     except ValueError:
         await update.message.reply_text("❌ Invalid price. Please send a number like <code>15</code> or <code>25</code>.", parse_mode=ParseMode.HTML)
 
@@ -12343,6 +12747,60 @@ async def toggleprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============ SHOW HOME ============
+async def browse_category_movies(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str = "requested", page: int = 0):
+    """Browse movies by category (requested / trending)."""
+    query = update.callback_query
+    user = update.effective_user
+    per_page = 8
+    skip = page * per_page
+    movies = []
+    total = 0
+    if movies_collection is not None:
+        try:
+            # Match category aliases
+            cats = [category]
+            if category in ("requested", "most_requested"):
+                cats = ["requested", "most requested", "most_requested"]
+            elif category == "trending":
+                cats = ["trending", "trend"]
+            q = {"category": {"$in": cats}}
+            total = movies_collection.count_documents(q)
+            movies = list(movies_collection.find(q).sort("created_at", DESCENDING).skip(skip).limit(per_page))
+        except Exception as e:
+            logger.error(f"browse_category: {e}")
+    title = "Most requested" if category in ("requested", "most_requested") else category.title()
+    if not movies:
+        text = add_footer(f"🔥 <b>{title}</b>\n\nNo movies in this category yet.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Home", callback_data="back")]])
+        if query:
+            await edit_or_send_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        else:
+            await context.bot.send_message(chat_id=user.id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+    lines = [f"🔥 <b>{title}</b> ({total})", ""]
+    rows = []
+    for m in movies:
+        t = clean_movie_title_for_button(m.get("title") or "Movie", max_len=28)
+        tok = m.get("token")
+        price = m.get("price", 0)
+        label = f"{t} — {price} KES" if price else f"{t} — FREE"
+        rows.append([InlineKeyboardButton(label, callback_data=f"movie_detail_{tok}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"category_{category}_{page-1}"))
+    if skip + per_page < total:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"category_{category}_{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("◀️ Home", callback_data="back")])
+    text = add_footer("\n".join(lines))
+    kb = InlineKeyboardMarkup(rows)
+    if query:
+        await edit_or_send_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    else:
+        await context.bot.send_message(chat_id=user.id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
 async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -12350,82 +12808,54 @@ async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
 
     track_user_bg(user.id, user.username, user.first_name, user.last_name)
     
-    total_users = get_user_count()
-    username_display = f"@{user.username}" if user.username else "No username"
+    username_display = f"@{user.username}" if user.username else (user.first_name or "user")
     has_sub, sub_type, expiry, used, max_movies = has_active_subscription(user.id)
-    
-    items = []
-    items.append({"label": f"👋 ʜɪ ᴡᴇʟᴄᴏᴍᴇ, {user.first_name}!", "value": ""})
-    items.append({"label": f"👤 {username_display}", "value": ""})
-    items.append({"label": f"👥 User: {total_users}", "value": ""})
-    items.append({"label": "", "value": ""})
-    
+    cart_count = len(get_user_cart(user_id)) if get_cart_enabled() else 0
+    wallet_bal = get_wallet_balance(user_id)
+
+    # Home text matching Zello movies sketch
+    brand = BOT_DISPLAY_NAME or MENU_TITLE or "Zello movies"
+    lines = [
+        f"🎬 <b>Welcome to {escape_html(brand)}</b>",
+        f"Hello {escape_html(username_display)}.",
+        "Home of entertainment",
+        "Movies and series ✓",
+    ]
     if has_sub:
-        items.append({"label": f"🎉 Active: {sub_type.title()} Pass", "value": ""})
+        lines.append(f"\n🎉 Active: <b>{sub_type.title()} Pass</b>")
         if expiry:
-            items.append({"label": f"📅 Expires: {expiry.strftime('%Y-%m-%d')}", "value": ""})
-        # Show used movies but NOT the limit
-        if used > 0:
-            items.append({"label": f"🎬 Movies used: {used}", "value": ""})
-        items.append({"label": "", "value": ""})
-        items.append({"label": "✅️ No limit for getting movies!", "value": ""})
-    else:
-        plans = get_subscription_plans()
-        items.append({"label": "🚀 Get movies without delay cheap!", "value": ""})
-        items.append({"label": "", "value": ""})
-        items.append({"label": f"💳 Single: {get_default_price()} KES", "value": ""})
-        if get_subscription_enabled():
-            items.append({"label": f"🌼 Weekly: {plans['weekly']['price']} KES", "value": ""})
-            items.append({"label": f"🌴 2-Week: {plans['2week']['price']} KES", "value": ""})
-            items.append({"label": f"☔ 3-Week: {plans['3week']['price']} KES", "value": ""})
-            items.append({"label": f"🔥 Monthly: {plans['monthly']['price']} KES", "value": ""})
-    
-    welcome_text = render_menu_for_user(user_id, MENU_TITLE, items)
+            lines.append(f"📅 Expires: {expiry.strftime('%Y-%m-%d')}")
+    lines.append(f"\n💰 Wallet: <b>{wallet_bal} KES</b>")
+    welcome_text = "\n".join(lines)
     welcome_text = add_footer(welcome_text)
-    welcome_text += get_datetime_footer()
-    # Premium wrap already applied in add_footer/render — do NOT await network refresh here (keeps /start fast)
     welcome_text = apply_premium_emojis(welcome_text)
 
-    genre_rows = []
-    if get_genre_buttons_enabled():
-        for row in get_active_genre_rows():
-            btn_row = []
-            for genre in row:
-                emoji = GENRE_EMOJI.get(genre, "🎬")
-                # compact: name then emoji; full: emoji then name (matches screenshots)
-                if get_genre_style() == "full":
-                    label = f"{emoji} {genre}"
-                else:
-                    label = f"{genre} {emoji}"
-                btn_row.append(InlineKeyboardButton(label, callback_data=f"genre_{genre}"))
-            genre_rows.append(btn_row)
-
+    # Buttons layout from sketch + trending:
+    # My Wallet | Cart (N)
+    # Search movies
+    # Trending | Most requested
+    # Movie channels
+    # Admin
     keyboard = [
-        [InlineKeyboardButton("ꜱᴇᴀʀᴄʜ ᴀʟʟ ᴍᴏᴠɪᴇꜱ 🔍", callback_data="search_movies"),
-         InlineKeyboardButton("ʙʀᴏᴡꜱᴇ ᴀʟʟ ᴍᴏᴠɪᴇꜱ 🎬", callback_data="watch_all_movies_0")],
-        [InlineKeyboardButton("ʙʀᴏᴡꜱᴇ ᴍᴏᴠɪᴇ ᴄᴏʟʟᴇᴄᴛɪᴏɴꜱ 📦", callback_data="browse_bundles_0"),
-         InlineKeyboardButton("ᴍᴏʀᴇ ᴍᴏᴠɪᴇꜱ ♻️", callback_data="more_movies")],
+        [
+            InlineKeyboardButton("💰 My Wallet", callback_data="wallet_home"),
+            InlineKeyboardButton(f"🛒 Cart ({cart_count})", callback_data="cart_view"),
+        ],
+        [InlineKeyboardButton("🔍 Search movies", callback_data="search_movies")],
+        [
+            InlineKeyboardButton("📈 Trending", callback_data="category_trending_0"),
+            InlineKeyboardButton("🔥 Most requested", callback_data="category_requested_0"),
+        ],
+        [InlineKeyboardButton("📺 Movie channels", callback_data="more_movies")],
     ]
-    if get_cart_enabled():
-        keyboard.append([InlineKeyboardButton("ᴍʏ ᴄᴀʀᴛ 🛒", callback_data="cart_view")])
-    keyboard.extend(genre_rows)
-
-    second_block = []
-    if get_subscription_enabled():
-        second_block.append(InlineKeyboardButton("ɢᴇᴛ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ 🔹", callback_data="show_plans"))
-    if get_getbot_enabled():
-        second_block.append(InlineKeyboardButton("ɢᴇᴛ ʙᴏᴛ ʟɪᴋᴇ ᴛʜɪꜱ 🤖", callback_data="getbot_cmd"))
-    second_block.append(InlineKeyboardButton("ʜᴏᴡ ᴛʜɪꜱ ʙᴏᴛ ᴡᴏʀᴋꜱ 📖", callback_data="how_bot_works"))
-    if MY_CHANNEL:
-        channel_url = f"https://t.me/{MY_CHANNEL.lstrip('@')}" if not MY_CHANNEL.startswith('http') else MY_CHANNEL
-        second_block.append(InlineKeyboardButton("ᴠɪꜱɪᴛ ᴏᴜʀ ᴄʜᴀɴɴᴇʟ 🌍", url=channel_url))
-    if ADMIN_USERNAME:
-        admin_url = f"https://t.me/{ADMIN_USERNAME.lstrip('@')}" if not ADMIN_USERNAME.startswith('http') else ADMIN_USERNAME
-        second_block.append(InlineKeyboardButton("ᴀᴅᴍɪɴ 👨‍💼", url=admin_url))
-    if ADDITIONAL_CHANNELS:
-        second_block.append(InlineKeyboardButton("ᴀᴅᴅ ꜰʀᴏᴍ ᴄʜᴀɴɴᴇʟ ➕", callback_data="visit_channels"))
-    for i in range(0, len(second_block), 2):
-        keyboard.append(second_block[i:i+2])
+    if ADMIN_USERNAME or ADMIN_LINK:
+        admin_url = ADMIN_LINK or (f"https://t.me/{ADMIN_USERNAME.lstrip('@')}" if ADMIN_USERNAME else None)
+        if admin_url:
+            keyboard.append([InlineKeyboardButton("👨‍💼 Admin", url=admin_url)])
+        else:
+            keyboard.append([InlineKeyboardButton("👨‍💼 Admin", callback_data="admin_contact")])
+    else:
+        keyboard.append([InlineKeyboardButton("👨‍💼 Admin", callback_data="admin_contact")])
     
     welcome_kb = InlineKeyboardMarkup(keyboard)
 
@@ -15234,6 +15664,7 @@ def setup_handlers():
 
     application.add_handler(CommandHandler("dev", dev_cmd))
     application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("wallet", wallet_cmd))
     application.add_handler(CommandHandler("cart", cart_cmd))
     application.add_handler(CommandHandler("movies", movies_cmd))
     application.add_handler(CommandHandler("browsebundles", browse_bundles_cmd))
@@ -15327,6 +15758,8 @@ def setup_handlers():
     except Exception as e:
         logger.error(f"Re-engage scheduler error: {e}")
     application.add_handler(CommandHandler("confronterking", confronterking_cmd))
+    application.add_handler(CommandHandler("confronterking2", confronterking2_cmd))
+    application.add_handler(CommandHandler("confronterking3", confronterking3_cmd))
     application.add_handler(CommandHandler("confronterkingcancel", confronterkingcancel_cmd))
     application.add_handler(CommandHandler("confronterupload", confronterupload_cmd))
     application.add_handler(CommandHandler("confronteruploaddone", confronteruploaddone_cmd))
@@ -15335,6 +15768,8 @@ def setup_handlers():
     application.add_handler(CommandHandler("kingdeliver", kingdeliver_cmd))
     application.add_handler(CommandHandler("cancelking", cancelking_cmd))
     application.add_handler(CommandHandler("confronterisundefeated", confronterisundefeated_cmd))
+    application.add_handler(CommandHandler("uploadtrending", uploadtrending_cmd))
+    application.add_handler(CommandHandler("uploadrequested", uploadrequested_cmd))
 
     application.add_handler(CommandHandler("stats", stats_cmd))
     application.add_handler(CommandHandler("monthlyusers", monthlyusers_cmd))
@@ -15409,6 +15844,7 @@ def setup_handlers():
     application.add_handler(CallbackQueryHandler(handle_upload_price_callback, pattern=r"^upload_price_"))
     application.add_handler(CallbackQueryHandler(handle_upload_channel_callback, pattern=r"^(upload_channel_|upload_cancel$)"))
     application.add_handler(CallbackQueryHandler(handle_confronter_king_channel_callback, pattern=r"^ck_channel_"))
+    application.add_handler(CallbackQueryHandler(handle_confronter_king_channel_callback, pattern=r"^ck2_group_"))
     application.add_handler(CallbackQueryHandler(handle_confronter_king_channel_callback, pattern=r"^ck_cancel$"))
     application.add_handler(CallbackQueryHandler(handle_confronter_king_price_callback, pattern=r"^ck_price_"))
     application.add_handler(CallbackQueryHandler(handle_callback))
@@ -18543,6 +18979,7 @@ if __name__ == '__main__':
                 BotCommand("myplanmovies", "📋 Rewatch movies from your plan library"),
                 BotCommand("checksubscription", "📊 Check subscription status & remaining"),
                 BotCommand("checkpayment", "💰 Check pending payment"),
+                BotCommand("wallet", "💰 My wallet / top up"),
                 BotCommand("cart", "🛒 View your shopping cart"),
                 BotCommand("moremovies", "📺 Browse movie channels"),
                 BotCommand("claimfree", "🎁 Claim free movie after 5 purchases"),
