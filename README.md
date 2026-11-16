@@ -1,4 +1,4 @@
-# 🎬 Club Vegas Bot - Telegram Movie Store with Paystack Payments
+#  Zello Movies  Bot - Telegram Movie Store with Paystack Payments
 
 A complete Telegram bot + web dashboard for selling movies with M-Pesa STK Push, card payments, and subscription plans.
 
