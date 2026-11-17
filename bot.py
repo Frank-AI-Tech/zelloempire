@@ -3684,6 +3684,52 @@ def add_wallet_balance(user_id: int, amount: int, reason: str = "topup", ref: st
         logger.error(f"add_wallet_balance: {e}")
         return get_wallet_balance(user_id)
 
+
+def reconcile_uncradited_wallet_topups(user_id: int) -> int:
+    """Credit successful wtop_ payments that never applied. Returns total credited."""
+    if payments_collection is None or users_collection is None:
+        return 0
+    total_added = 0
+    try:
+        u = users_collection.find_one({"user_id": int(user_id)}, {"wallet_history": 1}) or {}
+        already = set()
+        for h in (u.get("wallet_history") or []):
+            if h.get("ref"):
+                already.add(str(h["ref"]))
+        q = {
+            "user_id": int(user_id),
+            "status": "success",
+            "$or": [
+                {"reference": {"$regex": r"^wtop_"}},
+                {"is_wallet_topup": True},
+                {"type": "wallet_topup"},
+            ],
+        }
+        for pay in payments_collection.find(q):
+            ref = str(pay.get("reference") or "")
+            if not ref or ref in already:
+                continue
+            if pay.get("wallet_credited"):
+                continue
+            try:
+                top_amt = int(pay.get("amount") or 0)
+            except Exception:
+                top_amt = 0
+            if top_amt <= 0:
+                continue
+            _pay, credit, bonus = wallet_topup_credit(top_amt)
+            add_wallet_balance(user_id, credit, reason="topup_reconcile", ref=ref)
+            payments_collection.update_one(
+                {"_id": pay["_id"]},
+                {"$set": {"wallet_credited": True, "credited": credit, "bonus": bonus}},
+            )
+            total_added += credit
+            logger.info(f"Reconciled wallet topup user={user_id} ref={ref} credit={credit}")
+    except Exception as e:
+        logger.error(f"reconcile_uncradited_wallet_topups: {e}")
+    return total_added
+
+
 def deduct_wallet_balance(user_id: int, amount: int, reason: str = "purchase", ref: str = None) -> bool:
     """Debit wallet if enough balance. Returns True on success."""
     amount = int(amount or 0)
@@ -7808,11 +7854,63 @@ async def process_payhero_callback(callback_data: dict):
     plan = pending.get("plan")
     cart_tokens = pending.get("cart_tokens", [])
     is_cart = pending.get("is_cart", False)
+    ref = pending.get("reference") or external_ref
     logger.info(f"🚀 PayHero: Processing delivery for user={user_id}, movie={movie_token}, series={series_token}, cart={is_cart}")
     if payments_collection is not None:
-        payments_collection.update_one({"reference": pending.get('reference', external_ref)}, {"$set": {"status": "success", "paid_at": datetime.utcnow(), "payment_method": "payhero", "mpesa_receipt": mpesa_receipt, "phone": phone, "amount": amount}}, upsert=True)
+        payments_collection.update_one({"reference": ref}, {"$set": {"status": "success", "paid_at": datetime.utcnow(), "payment_method": "payhero", "mpesa_receipt": mpesa_receipt, "phone": phone, "amount": amount}}, upsert=True)
     clear_pending_payment_tracker(user_id)
     pending_payhero_collection.update_one({"_id": pending["_id"]}, {"$set": {"status": "completed", "completed_at": datetime.utcnow(), "mpesa_receipt": mpesa_receipt}})
+
+    # Wallet top-up
+    pay_rec = payments_collection.find_one({"reference": ref}) if payments_collection is not None else None
+    is_wtop = (
+        str(ref or "").startswith("wtop_")
+        or bool(pending.get("is_wallet_topup"))
+        or (pay_rec and (pay_rec.get("is_wallet_topup") or pay_rec.get("type") == "wallet_topup"))
+    )
+    if is_wtop:
+        try:
+            top_amt = int((pay_rec or {}).get("amount") or pending.get("price") or pending.get("amount") or amount or 0)
+        except Exception:
+            top_amt = int(amount or 0)
+        pay, credit, bonus = wallet_topup_credit(top_amt)
+        new_bal = add_wallet_balance(user_id, credit, reason="topup", ref=ref)
+        try:
+            if payments_collection is not None and ref:
+                payments_collection.update_one(
+                    {"reference": ref},
+                    {"$set": {
+                        "status": "success",
+                        "is_wallet_topup": True,
+                        "type": "wallet_topup",
+                        "credited": credit,
+                        "bonus": bonus,
+                        "paid_at": datetime.utcnow(),
+                    }},
+                    upsert=True,
+                )
+        except Exception:
+            pass
+        bonus_line = f"\n{style_sub('Bonus')}: +{bonus} KES" if bonus else ""
+        try:
+            await application.bot.send_message(
+                chat_id=chat_id,
+                text=add_footer(
+                    f"✅ {style_title('Wallet topped up')}\n"
+                    f"{style_sub('Credited')}: +{credit} KES{bonus_line}\n"
+                    f"{style_sub('Balance')}: {new_bal} KES"
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 My Wallet", callback_data="wallet_home")],
+                    [InlineKeyboardButton("🏠 Home", callback_data="back")],
+                ]),
+            )
+        except Exception as e:
+            logger.error(f"PayHero wallet notify: {e}")
+        logger.info(f"Wallet topup (payhero) user={user_id} pay={pay} credit={credit} bonus={bonus} bal={new_bal} ref={ref}")
+        return
+
     if is_subscription and plan:
         create_subscription(user_id, plan, external_ref)
         plan_info = get_subscription_plans().get(plan, {})
@@ -7863,7 +7961,29 @@ Use /start to browse movies.""",
         try:
             payment_record = payments_collection.find_one({"reference": pending.get("reference") or external_ref}) if payments_collection is not None else None
             if payment_record:
-                if payment_record.get("is_subscription") or payment_record.get("type") == "subscription":
+                if payment_record.get("is_wallet_topup") or payment_record.get("type") == "wallet_topup" or str(payment_record.get("reference") or "").startswith("wtop_"):
+                    try:
+                        top_amt = int(payment_record.get("amount") or amount or 0)
+                    except Exception:
+                        top_amt = int(amount or 0)
+                    pay, credit, bonus = wallet_topup_credit(top_amt)
+                    new_bal = add_wallet_balance(user_id, credit, reason="topup", ref=payment_record.get("reference") or external_ref)
+                    bonus_line = f"\n{style_sub('Bonus')}: +{bonus} KES" if bonus else ""
+                    await application.bot.send_message(
+                        chat_id=chat_id,
+                        text=add_footer(
+                            f"✅ {style_title('Wallet topped up')}\n"
+                            f"{style_sub('Credited')}: +{credit} KES{bonus_line}\n"
+                            f"{style_sub('Balance')}: {new_bal} KES"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("💳 My Wallet", callback_data="wallet_home")],
+                            [InlineKeyboardButton("🏠 Home", callback_data="back")],
+                        ]),
+                    )
+                    recovered = True
+                elif payment_record.get("is_subscription") or payment_record.get("type") == "subscription":
                     plan = payment_record.get("plan") or plan
                     if plan:
                         create_subscription(user_id, plan, external_ref)
@@ -8759,6 +8879,13 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         return
 
     if data == "wallet_home":
+        # Recover any paid top-ups that never credited (PayHero/Makamesco race)
+        try:
+            added = reconcile_uncradited_wallet_topups(user_id)
+            if added:
+                logger.info(f"wallet_home reconciled +{added} for user={user_id}")
+        except Exception as e:
+            logger.error(f"wallet reconcile: {e}")
         bal = get_wallet_balance(user_id)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Top up (min 10 KES)", callback_data="wallet_topup")],
