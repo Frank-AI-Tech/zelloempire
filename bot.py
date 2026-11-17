@@ -1037,38 +1037,50 @@ def to_small_caps(text: str) -> str:
     except Exception:
         return str(text)
 
-# Mathematical Sans-Serif Bold  (𝐓𝐡𝐢𝐬 𝐟𝐨𝐧𝐭)
-_BOLD_SANS_MAP = str.maketrans(
+# Mathematical Serif Bold (𝐓𝐡𝐢𝐬 𝐟𝐨𝐧𝐭) — titles
+_BOLD_SERIF_MAP = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-    "𝖠𝖡𝖢𝖣𝖤𝖥𝖦𝖧𝖨𝖩𝖪𝖫𝖬𝖭𝖮𝖯𝖰𝖱𝖲𝖳𝖴𝖵𝖶𝖷𝖸𝖹𝖺𝖻𝖼𝖽𝖾𝖿𝗀𝗁𝗂𝗃𝗄𝗅𝗆𝗇𝗈𝗉𝗊𝗋𝗌𝗍𝗎𝗏𝗐𝗑𝗒𝗓𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫"
+    "𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"
 )
-# Mathematical Bold Italic (𝒂𝒏𝒅 𝒕𝒉𝒊𝒔 𝒇𝒐𝒏𝒕) — Latin only
+# Mathematical Bold Italic (𝒂𝒏𝒅 𝒕𝒉𝒊𝒔 𝒇𝒐𝒏𝒕) — body
 _ITALIC_BOLD_MAP = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
     "𝑨𝑩𝑪𝑫𝑬𝑭𝑮𝑯𝑰𝑱𝑲𝑳𝑴𝑵𝑶𝑷𝑸𝑹𝑺𝑻𝑼𝑽𝑾𝑿𝒀𝒁𝒂𝒃𝒄𝒅𝒆𝒇𝒈𝒉𝒊𝒋𝒌𝒍𝒎𝒏𝒐𝒑𝒒𝒓𝒔𝒕𝒖𝒗𝒘𝒙𝒚𝒛"
 )
 
-def to_bold_sans(text: str) -> str:
-    """Sans-serif bold look: 𝐓𝐡𝐢𝐬 𝐟𝐨𝐧𝐭"""
+def to_bold_serif(text: str) -> str:
+    """Serif bold look for titles."""
     try:
-        return str(text).translate(_BOLD_SANS_MAP)
+        return str(text).translate(_BOLD_SERIF_MAP)
     except Exception:
         return str(text)
 
 def to_italic_bold(text: str) -> str:
-    """Bold italic look: 𝒂𝒏𝒅 𝒕𝒉𝒊𝒔 𝒇𝒐𝒏𝒕"""
+    """Bold italic look for body text."""
     try:
         return str(text).translate(_ITALIC_BOLD_MAP)
     except Exception:
         return str(text)
 
 def style_title(text: str) -> str:
-    """Primary title style — bold sans."""
-    return to_bold_sans(str(text or ""))
+    """Primary title — Serif Bold."""
+    return to_bold_serif(str(text or ""))
 
 def style_sub(text: str) -> str:
-    """Secondary line style — italic bold."""
+    """Body / subtitle — italic bold."""
     return to_italic_bold(str(text or ""))
+
+
+def wallet_topup_credit(amount: int) -> tuple:
+    """Return (pay_amount, credit_amount, bonus). Bonus 20% when pay >= 100."""
+    try:
+        pay = int(amount or 0)
+    except Exception:
+        pay = 0
+    if pay >= 100:
+        bonus = int(round(pay * 0.20))
+        return pay, pay + bonus, bonus
+    return pay, pay, 0
 
 def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amount=None, discount=None, for_wallet_topup=False) -> str:
     """Short M-Pesa / wallet prompt — minimal wording."""
@@ -1078,8 +1090,15 @@ def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amo
         amt = amount
     lines = []
     if for_wallet_topup:
-        lines.append(f"💰 {style_title('Wallet Top-up')}")
-        lines.append(f"{style_sub('Amount')}: {amt} KES")
+        pay, credit, bonus = wallet_topup_credit(amt)
+        lines.append(f"💳 {style_title('Wallet Top-up')}")
+        lines.append(f"{style_sub('You pay')}: {pay} KES")
+        if bonus > 0:
+            lines.append(f"{style_sub('Bonus 20%')}: +{bonus} KES")
+            lines.append(f"{style_sub('You get')}: {credit} KES")
+        else:
+            lines.append(f"{style_sub('You get')}: {credit} KES")
+            lines.append(style_sub("Bonus 20% from 100 KES+"))
         lines.append(f"{style_sub('Send M-Pesa no.')}")
         lines.append("07XXXXXXXX  ·  2547XXXXXXXX")
         lines.append(style_sub("Enter PIN — funds added"))
@@ -2213,17 +2232,27 @@ Click below to continue with your {PAYMENT_PROMPT_NAME}:"""
     except Exception as e:
         logger.error(f"Error sending payment failure warning: {e}")
 
-def build_payment_keyboard(auth_url, ref, price, user_id, plans, include_subs=True):
+def build_payment_keyboard(auth_url, ref, price, user_id, plans, include_subs=True, movie_token=None, show_cart=True):
     keyboard = []
     try:
         bal = get_wallet_balance(user_id)
     except Exception:
         bal = 0
-    # Wallet first so user always sees balance + option
-    keyboard.append([InlineKeyboardButton(f"💰 Pay with Wallet ({bal} KES)", callback_data=f"pay_wallet_{ref}_{price}")])
+    # Wallet + M-Pesa (requested emojis)
+    keyboard.append([InlineKeyboardButton(f"💳 Pay with Wallet ({bal} KES)", callback_data=f"pay_wallet_{ref}_{price}")])
     keyboard.append([InlineKeyboardButton("📱 Pay with M-Pesa", callback_data=f"stk_{ref}_{price}")])
     if get_card_payment_setting():
         keyboard.append([InlineKeyboardButton("💳 Pay with Card", url=auth_url or "https://paystack.com/pay")])
+    # Cart on payment screens
+    if show_cart and get_cart_enabled():
+        try:
+            cart_n = len(get_user_cart(user_id))
+        except Exception:
+            cart_n = 0
+        row = [InlineKeyboardButton(f"🛒 Cart ({cart_n})", callback_data="cart_view")]
+        if movie_token:
+            row.insert(0, InlineKeyboardButton("🎥 Add to Cart", callback_data=f"cart_add_{movie_token}"))
+        keyboard.append(row)
     if include_subs and get_subscription_enabled():
         keyboard.append([
             InlineKeyboardButton(f"ᴡᴇᴇᴋʟʏ ({plans['weekly']['price']} KES)", callback_data=f"sub_weekly_{user_id}"),
@@ -5801,7 +5830,7 @@ async def deliver_free_parts_and_charge_paid(update, context, main_token: str, s
 
     free_note = f"\n🎁 Free sent: {len(free_docs)}" if free_docs else ""
     caption = (
-        f"🎬 {style_title(str(title))}\n"
+        f"🎥 {style_title(str(title))}\n"
         f"{style_sub('Parts')}: {', '.join(part_labels)}\n"
         f"{style_sub('Pay')}: {pay_total} KES"
         f"{free_note}"
@@ -5834,7 +5863,7 @@ async def show_king3_series_picker(update, context, series):
     context.user_data["awaiting_king3_parts"] = True
 
     caption = (
-        f"🎬 {style_title(str(title))}\n"
+        f"🎥 {style_title(str(title))}\n"
         f"{style_sub('Parts')}: {total}  ·  {style_sub('Each')}: {unit} KES\n"
         f"{style_sub('Full')}: {price_all} KES\n"
         f"{style_sub('Tap group · type 1,2,3 or 1-40 · Get All')}"
@@ -6038,14 +6067,20 @@ async def confronterisundefeated_cmd(update: Update, context: ContextTypes.DEFAU
     saved_movies = []
     movie_links = []
     
-    upload_title = f"{prefix} Collection" if prefix else "Movie Collection"
+    # Admin-typed prefix is the series title/caption (not "... Collection")
+    upload_title = (prefix or "").strip() or "Series"
     main_token = generate_count_token()
     existing_tokens.append(main_token)
     
     for i, movie_data in enumerate(movies, 1):
         title = movie_data.get("title", "Unknown Movie")
         part_number = movie_data.get("part_number", i)
-        button_title = clean_movie_title_for_button(title)
+        # Keep part detection from video caption; display title = prefix + part
+        if upload_title and part_number:
+            display_title = f"{upload_title} {part_number}"
+        else:
+            display_title = title
+        button_title = clean_movie_title_for_button(display_title)
         file_id = movie_data.get("file_id")
         file_type = movie_data.get("file_type", "video")
         
@@ -6057,7 +6092,7 @@ async def confronterisundefeated_cmd(update: Update, context: ContextTypes.DEFAU
         individual_token = generate_count_token()
         existing_tokens.append(individual_token)
         
-        movie_doc = {"token": individual_token, "bundle_token": main_token, "title": title, "button_title": button_title, "part_number": part_number, "part_display": part_display, "is_free": is_free, "description": f"Part {part_number} of {total_parts}", "price": part_price, "poster_url": poster_url or "", "poster_file_id": (session.get("poster_file_id") or ""), "poster_caption": poster_caption, "file_id": file_id, "file_type": file_type, "channel_id": None, "message_id": None, "private_link": "", "category": "movie", "downloads": 0, "created_at": datetime.utcnow(), "is_bundle_part": True, "bundle_parent": main_token, "collection_title": upload_title, "collection_total": total_parts, "collection_index": i}
+        movie_doc = {"token": individual_token, "bundle_token": main_token, "title": display_title, "raw_title": title, "button_title": button_title, "part_number": part_number, "part_display": part_display, "is_free": is_free, "description": f"Part {part_number} of {total_parts}", "price": part_price, "poster_url": poster_url or "", "poster_file_id": (session.get("poster_file_id") or ""), "poster_caption": poster_caption, "file_id": file_id, "file_type": file_type, "channel_id": None, "message_id": None, "private_link": "", "category": "movie", "downloads": 0, "created_at": datetime.utcnow(), "is_bundle_part": True, "bundle_parent": main_token, "collection_title": upload_title, "collection_total": total_parts, "collection_index": i}
         
         try:
             movies_collection.insert_one(movie_doc)
@@ -6077,7 +6112,7 @@ async def confronterisundefeated_cmd(update: Update, context: ContextTypes.DEFAU
         bundle_data = {
             "token": main_token,
             "title": f"{upload_title} ({total_parts} parts)",
-            "button_title": clean_movie_title_for_button(prefix or "Collection"),
+            "button_title": clean_movie_title_for_button(upload_title or prefix or "Series"),
             "price": get_all_price,
             "original_price": price_per_movie * total_parts,
             "discount": discount,
@@ -7648,16 +7683,22 @@ async def _handle_webhook_payment_success(reference: str, user_id: int, chat_id:
     if (reference or "").startswith("wtop_") or (payment_record and (payment_record.get("is_wallet_topup") or payment_record.get("type") == "wallet_topup")):
         try:
             top_amt = int(payment_record.get("amount") or amount_kes or 0) if payment_record else int(amount_kes or 0)
-            new_bal = add_wallet_balance(user_id, top_amt, reason="topup", ref=reference)
+            pay, credit, bonus = wallet_topup_credit(top_amt)
+            new_bal = add_wallet_balance(user_id, credit, reason="topup", ref=reference)
             try:
+                bonus_line = f"\n{style_sub('Bonus')}: +{bonus} KES" if bonus else ""
                 await application.bot.send_message(
                     chat_id=chat_id or user_id,
-                    text=add_footer(f"✅ <b>Wallet topped up!</b>\n\n+{top_amt} KES\nNew balance: <b>{new_bal} KES</b>"),
+                    text=add_footer(
+                        f"✅ {style_title('Wallet topped up')}\n"
+                        f"{style_sub('Credited')}: +{credit} KES{bonus_line}\n"
+                        f"{style_sub('Balance')}: {new_bal} KES"
+                    ),
                     parse_mode=ParseMode.HTML,
                 )
             except Exception:
                 pass
-            logger.info(f"Wallet topup user={user_id} +{top_amt} bal={new_bal}")
+            logger.info(f"Wallet topup user={user_id} pay={pay} credit={credit} bonus={bonus} bal={new_bal}")
         except Exception as e:
             logger.error(f"wallet topup credit: {e}")
         return
@@ -8761,7 +8802,7 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
             })
         poster = series_g.get("poster_file_id") or series_g.get("poster_url") or ""
         caption = add_footer(apply_premium_emojis(
-            f"🎬 {style_title(str(series_g.get('title') or 'Series'))}\n"
+            f"🎥 {style_title(str(series_g.get('title') or 'Series'))}\n"
             f"🎯 {style_title('Get All Once')}\n"
             f"{style_sub('Parts')}: {series_g.get('total_parts') or series_g.get('episode_count') or '?'}\n"
             f"{style_sub('Pay')}: {price} KES"
@@ -9789,13 +9830,17 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     carrier = result.get('carrier', 'Unknown')
     provider_display = "M-Pesa" if result.get('provider') == 'mpesa' else "Airtel Money"
     prompt_name = PAYMENT_PROMPT_NAME or "payment"
-    mini = add_footer(render_menu_for_user(user.id, "📲 M-Pesa Prompt Sent", [
+    is_wtop = bool(pending.get("is_wallet_topup")) or str(pending.get("reference") or "").startswith("wtop_")
+    _stk_items = [
         {"label": "Phone", "value": formatted_phone},
         {"label": "Amount", "value": f"{pending['price']} KES"},
-        {"label": "", "value": ""},
-        {"label": "Enter your M-Pesa PIN on the phone prompt to complete.", "value": ""},
-        {"label": "Content delivers instantly after confirmation.", "value": ""},
-    ]))
+        {"label": "Enter M-Pesa PIN on phone", "value": ""},
+    ]
+    if not is_wtop:
+        _stk_items.append({"label": "Content delivers after confirmation", "value": ""})
+    else:
+        _stk_items.append({"label": "Funds added to wallet after confirmation", "value": ""})
+    mini = add_footer(render_menu_for_user(user.id, "📲 M-Pesa Prompt Sent", _stk_items))
     await update.message.reply_text(
         mini,
         reply_markup=build_back_keyboard("back"),
@@ -9903,14 +9948,16 @@ async def handle_payhero_phone_input(update: Update, context: ContextTypes.DEFAU
     pending_payhero_collection.update_one({"user_id": user.id}, {"$set": {"status": "stk_sent", "phone": formatted_phone, "checkout_request_id": checkout_id, "channel_id": (result or {}).get('channel_id'), "provider": provider, "sent_at": datetime.utcnow()}})
     context.user_data["phone_input_handled"] = True
     prompt_name = PAYMENT_PROMPT_NAME or "payment"
-    # Minimal clean prompt as requested
+    is_wtop = bool(pending.get("is_wallet_topup")) or str(pending.get("reference") or "").startswith("wtop_")
     stk_items = [
         {"label": "Phone", "value": formatted_phone},
         {"label": "Amount", "value": f"{price} KES"},
-        {"label": "", "value": ""},
-        {"label": "Enter your M-Pesa PIN on the prompt to complete payment.", "value": ""},
-        {"label": "Content delivers instantly after confirmation.", "value": ""},
+        {"label": "Enter M-Pesa PIN on phone", "value": ""},
     ]
+    if is_wtop:
+        stk_items.append({"label": "Funds added to wallet after confirmation", "value": ""})
+    else:
+        stk_items.append({"label": "Content delivers after confirmation", "value": ""})
     stk_text = render_menu_for_user(user.id, "📲 M-Pesa Prompt Sent", stk_items)
     await update.message.reply_text(
         add_footer(stk_text),
@@ -11534,33 +11581,36 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
     if data == "upload_price_0":
         context.user_data["upload_price"] = 0
         context.user_data["upload_price_selected"] = True
-        await query.edit_message_text(f"✅ Price set to <b>0 KES (FREE)</b>!\n\nNow send a <b>poster photo</b> with the movie title as the caption.\nThen send the <b>movie file</b> (video or document).\nRepeat for as many movies as you want.\n\nWhen done, type <code>/complete</code> to finalize.", parse_mode=ParseMode.HTML)
+        cat = context.user_data.get("upload_category") or "movie"
+        await query.edit_message_text(f"✅ Price set to <b>0 KES (FREE)</b>!\n\nCategory: <b>{cat}</b>\nSend poster (title caption) + video.\nWhen done: <code>/complete</code>", parse_mode=ParseMode.HTML)
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_category"] = cat
         context.user_data["upload_data"] = {"movies": [], "price": 0, "category": cat}
         return
     
     elif data == "upload_price_10":
         context.user_data["upload_price"] = 10
         context.user_data["upload_price_selected"] = True
-        await query.edit_message_text(f"✅ Price set to <b>10 KES</b>!\n\nNow send a <b>poster photo</b> with the movie title as the caption.\nThen send the <b>movie file</b> (video or document).\nRepeat for as many movies as you want.\n\nWhen done, type <code>/complete</code> to finalize.", parse_mode=ParseMode.HTML)
+        cat = context.user_data.get("upload_category") or "movie"
+        await query.edit_message_text(f"✅ Price set to <b>10 KES</b>!\n\nCategory: <b>{cat}</b>\nSend poster (title caption) + video.\nWhen done: <code>/complete</code>", parse_mode=ParseMode.HTML)
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_category"] = cat
         context.user_data["upload_data"] = {"movies": [], "price": 10, "category": cat}
         return
     
     elif data == "upload_price_20":
         context.user_data["upload_price"] = 20
         context.user_data["upload_price_selected"] = True
-        await query.edit_message_text(f"✅ Price set to <b>20 KES</b>!\n\nNow send a <b>poster photo</b> with the movie title as the caption.\nThen send the <b>movie file</b> (video or document).\nRepeat for as many movies as you want.\n\nWhen done, type <code>/complete</code> to finalize.", parse_mode=ParseMode.HTML)
+        cat = context.user_data.get("upload_category") or "movie"
+        await query.edit_message_text(f"✅ Price set to <b>20 KES</b>!\n\nCategory: <b>{cat}</b>\nSend poster (title caption) + video.\nWhen done: <code>/complete</code>", parse_mode=ParseMode.HTML)
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_category"] = cat
         context.user_data["upload_data"] = {"movies": [], "price": 20, "category": cat}
         return
     
@@ -11573,11 +11623,12 @@ async def handle_upload_price_callback(update: Update, context: ContextTypes.DEF
         price = get_default_price()
         context.user_data["upload_price"] = price
         context.user_data["upload_price_selected"] = True
-        await query.edit_message_text(f"✅ Price set to default: <b>{price} KES</b>!\n\nNow send a <b>poster photo</b> with the movie title as the caption.\nThen send the <b>movie file</b> (video or document).\nRepeat for as many movies as you want.\n\nWhen done, type <code>/complete</code> to finalize.", parse_mode=ParseMode.HTML)
+        cat = context.user_data.get("upload_category") or "movie"
+        await query.edit_message_text(f"✅ Price set to default: <b>{price} KES</b>!\n\nCategory: <b>{cat}</b>\nSend poster (title caption) + video.\nWhen done: <code>/complete</code>", parse_mode=ParseMode.HTML)
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_category"] = cat
         context.user_data["upload_data"] = {"movies": [], "price": price, "category": cat}
         return
 
@@ -11600,11 +11651,12 @@ async def handle_upload_price_text(update: Update, context: ContextTypes.DEFAULT
         context.user_data["upload_price_selected"] = True
         context.user_data.pop("awaiting_upload_price", None)
         
-        await update.message.reply_text(f"✅ Price set to <b>{price} KES</b>!\n\nNow send a <b>poster photo</b> with the movie title as the caption.\nThen send the <b>movie file</b> (video or document).\nRepeat for as many movies as you want.\n\nWhen done, type <code>/complete</code> to finalize.", parse_mode=ParseMode.HTML)
+        cat = context.user_data.get("upload_category") or "movie"
+        await update.message.reply_text(f"✅ Price set to <b>{price} KES</b>!\n\nCategory: <b>{cat}</b>\nSend poster (title caption) + video.\nWhen done: <code>/complete</code>", parse_mode=ParseMode.HTML)
         _clear_upload_state(admin.id, context)
         context.user_data["upload_mode"] = True
         context.user_data["upload_step"] = "poster"
-        cat = context.user_data.get("upload_category") or "movie"
+        context.user_data["upload_category"] = cat
         context.user_data["upload_data"] = {"movies": [], "price": price, "category": cat}
     except ValueError:
         await update.message.reply_text("❌ Invalid price. Please send a number like <code>15</code> or <code>25</code>.", parse_mode=ParseMode.HTML)
@@ -11786,7 +11838,8 @@ async def complete_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if saved:
         items = []
         items.append({"label": "✅ UPLOAD COMPLETE!", "value": ""})
-        items.append({"label": "🎬 Movies saved:", "value": str(len(saved))})
+        items.append({"label": "🎥 Movies saved:", "value": str(len(saved))})
+        items.append({"label": "📁 Category:", "value": str(upload_data.get("category") or "movie")})
         items.append({"label": "💰 Price:", "value": f"{upload_data.get('price', 10)} KES"})
         
         summary = render_menu_for_user(admin.id, "✅ UPLOAD COMPLETE!", items)
@@ -13169,9 +13222,8 @@ async def browse_category_movies(update: Update, context: ContextTypes.DEFAULT_T
         title = "Most requested" if category in ("requested", "most_requested") else category.title()
     if not movies:
         text = add_footer(
-            f"{'🔥' if 'request' in title.lower() else '📈'} <b>{title}</b>\n\n"
-            f"No movies in this category yet.\n"
-            f"Admin: use /upload{'requested' if 'request' in title.lower() else 'trending'}."
+            f"{'🔥' if 'request' in title.lower() else '📈'} {style_title(title)}\n"
+            f"{style_sub('No movies yet')}"
         )
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Home", callback_data="back")]])
         if query:
