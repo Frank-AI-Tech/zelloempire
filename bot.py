@@ -1037,47 +1037,71 @@ def to_small_caps(text: str) -> str:
     except Exception:
         return str(text)
 
-def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amount=None, discount=None) -> str:
-    """M-Pesa prompt with menu style box. Shows discount when original_amount > amount."""
-    items = []
-    if extra_lines:
-        for x in extra_lines:
-            s = str(x).strip()
-            if s:
-                items.append({"label": s, "value": ""})
+# Mathematical Sans-Serif Bold  (𝐓𝐡𝐢𝐬 𝐟𝐨𝐧𝐭)
+_BOLD_SANS_MAP = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    "𝖠𝖡𝖢𝖣𝖤𝖥𝖦𝖧𝖨𝖩𝖪𝖫𝖬𝖭𝖮𝖯𝖰𝖱𝖲𝖳𝖴𝖵𝖶𝖷𝖸𝖹𝖺𝖻𝖼𝖽𝖾𝖿𝗀𝗁𝗂𝗃𝗄𝗅𝗆𝗇𝗈𝗉𝗊𝗋𝗌𝗍𝗎𝗏𝗐𝗑𝗒𝗓𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫"
+)
+# Mathematical Bold Italic (𝒂𝒏𝒅 𝒕𝒉𝒊𝒔 𝒇𝒐𝒏𝒕) — Latin only
+_ITALIC_BOLD_MAP = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "𝑨𝑩𝑪𝑫𝑬𝑭𝑮𝑯𝑰𝑱𝑲𝑳𝑴𝑵𝑶𝑷𝑸𝑹𝑺𝑻𝑼𝑽𝑾𝑿𝒀𝒁𝒂𝒃𝒄𝒅𝒆𝒇𝒈𝒉𝒊𝒋𝒌𝒍𝒎𝒏𝒐𝒑𝒒𝒓𝒔𝒕𝒖𝒗𝒘𝒙𝒚𝒛"
+)
+
+def to_bold_sans(text: str) -> str:
+    """Sans-serif bold look: 𝐓𝐡𝐢𝐬 𝐟𝐨𝐧𝐭"""
+    try:
+        return str(text).translate(_BOLD_SANS_MAP)
+    except Exception:
+        return str(text)
+
+def to_italic_bold(text: str) -> str:
+    """Bold italic look: 𝒂𝒏𝒅 𝒕𝒉𝒊𝒔 𝒇𝒐𝒏𝒕"""
+    try:
+        return str(text).translate(_ITALIC_BOLD_MAP)
+    except Exception:
+        return str(text)
+
+def style_title(text: str) -> str:
+    """Primary title style — bold sans."""
+    return to_bold_sans(str(text or ""))
+
+def style_sub(text: str) -> str:
+    """Secondary line style — italic bold."""
+    return to_italic_bold(str(text or ""))
+
+def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amount=None, discount=None, for_wallet_topup=False) -> str:
+    """Short M-Pesa / wallet prompt — minimal wording."""
     try:
         amt = int(amount or 0)
     except Exception:
         amt = amount
-    try:
-        orig = int(original_amount) if original_amount is not None else None
-    except Exception:
-        orig = None
-    try:
-        disc = int(discount) if discount is not None else None
-    except Exception:
-        disc = None
-    if orig is not None and disc is not None and disc > 0:
-        items.append({"label": f"≼{to_small_caps('SUBTOTAL')}:", "value": f"{orig} KES"})
-        items.append({"label": f"🎁 {to_small_caps('DISCOUNT')}:", "value": f"-{disc} KES"})
-        items.append({"label": f"≼{to_small_caps('YOU PAY')}:", "value": f"{amt} KES"})
+    lines = []
+    if for_wallet_topup:
+        lines.append(f"💰 {style_title('Wallet Top-up')}")
+        lines.append(f"{style_sub('Amount')}: {amt} KES")
+        lines.append(f"{style_sub('Send M-Pesa no.')}")
+        lines.append("07XXXXXXXX  ·  2547XXXXXXXX")
+        lines.append(style_sub("Enter PIN — funds added"))
     else:
-        items.append({"label": f"≼{to_small_caps('AMOUNT')}:", "value": f"{amt} KES"})
-    items.extend([
-        {"label": f"≼{to_small_caps('SEND YOUR M-PESA NO. IN ONE OF THESE FORMATS')}:", "value": ""},
-        {"label": f"≼{to_small_caps('SAFARICOM OR AIRTEL')}≽:", "value": ""},
-        {"label": "➨ 0712345678", "value": ""},
-        {"label": "➨ 0123456789", "value": ""},
-        {"label": "➠ 254712345678", "value": ""},
-        {"label": "➠ 254123456789", "value": ""},
-        {"label": f"≼{to_small_caps('ENTER PIN ON PHONE — CONTENT DELIVERS INSTANTLY')}.", "value": ""},
-    ])
-    title = to_small_caps("M-PESA PAYMENT")
-    try:
-        return render_menu_for_user(user_id, title, items)
-    except Exception:
-        lines = [title] + [f"{i.get('label','')} {i.get('value','')}".strip() for i in items]
-        return "\n".join(lines)
+        lines.append(f"📱 {style_title('M-Pesa')}")
+        if original_amount is not None and discount is not None:
+            try:
+                if int(discount) > 0:
+                    lines.append(f"{style_sub('Subtotal')}: {int(original_amount)} KES")
+                    lines.append(f"{style_sub('Discount')}: -{int(discount)} KES")
+            except Exception:
+                pass
+        lines.append(f"{style_sub('Pay')}: {amt} KES")
+        lines.append(f"{style_sub('Send M-Pesa no.')}")
+        lines.append("07XXXXXXXX  ·  2547XXXXXXXX")
+        lines.append(style_sub("Enter PIN — delivers"))
+    if extra_lines:
+        for x in extra_lines:
+            s = str(x).strip()
+            if s:
+                lines.insert(1, s)
+    return "\n".join(lines)
 
 MENU_STYLES = {
     "confronter01": {"name": "Confronter Style 1", "description": "➨| prefix lines", "renderer": "render_confronter01"},
@@ -5644,6 +5668,243 @@ def calculate_discount(total_parts: int, base_price: int) -> int:
     free_count = n // 5  # 5→1, 9→1, 10→2, 14→2, 15→3
     return max(0, free_count * unit)
 
+
+def parse_part_selection_text(text: str, max_part: int = 9999) -> list:
+    """Parse '1,2,3' or '1-40' or '2-7,10,15' into sorted unique part numbers."""
+    text = (text or "").strip().replace(" ", "")
+    if not text:
+        return []
+    parts = set()
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = re.match(r"^(\d+)\s*[-–—]\s*(\d+)$", chunk)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a > b:
+                a, b = b, a
+            for n in range(a, b + 1):
+                if 1 <= n <= max_part:
+                    parts.add(n)
+        elif chunk.isdigit():
+            n = int(chunk)
+            if 1 <= n <= max_part:
+                parts.add(n)
+    return sorted(parts)
+
+
+def get_series_parts_docs(main_token: str) -> list:
+    """Load part movies for a series, sorted by part_number."""
+    if movies_collection is None:
+        return []
+    try:
+        docs = list(movies_collection.find({
+            "$or": [
+                {"bundle_parent": main_token},
+                {"bundle_token": main_token},
+            ]
+        }))
+        docs.sort(key=lambda d: int(d.get("part_number") or d.get("collection_index") or 0))
+        return docs
+    except Exception as e:
+        logger.error(f"get_series_parts_docs: {e}")
+        return []
+
+
+async def deliver_free_parts_and_charge_paid(update, context, main_token: str, selected_parts: list, series=None):
+    """
+    Deliver free parts immediately. Collect paid parts → one payment for all of them.
+    selected_parts = list of part numbers (ints).
+    """
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    parts = get_series_parts_docs(main_token)
+    if not parts:
+        await context.bot.send_message(chat_id=chat_id, text=add_footer("❌ No parts found for this series."), parse_mode=ParseMode.HTML)
+        return
+    total_parts = len(parts)
+    series = series or (series_bundles_collection.find_one({"token": main_token}) if series_bundles_collection is not None else None)
+    title = (series or {}).get("title") or (parts[0].get("collection_title") if parts else "Series")
+
+    # Map part_number → doc
+    by_num = {}
+    for d in parts:
+        pn = int(d.get("part_number") or 0)
+        if pn:
+            by_num[pn] = d
+        else:
+            by_num[len(by_num) + 1] = d
+
+    free_docs, paid_docs = [], []
+    for pn in selected_parts:
+        doc = by_num.get(pn)
+        if not doc:
+            continue
+        is_free = bool(doc.get("is_free")) or int(doc.get("price") or 0) == 0 or is_part_free(pn, total_parts)
+        if is_free or user_owns_movie(user.id, doc.get("token")):
+            free_docs.append(doc)
+        else:
+            paid_docs.append(doc)
+
+    # Deliver free / owned immediately
+    for doc in free_docs:
+        try:
+            await forward_movie(update, context, doc)
+        except Exception as e:
+            logger.error(f"free part deliver: {e}")
+            try:
+                await auto_deliver_movie(user.id, doc.get("token"), context)
+            except Exception:
+                pass
+
+    if not paid_docs:
+        if free_docs:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=add_footer(f"✅ Delivered {len(free_docs)} free/owned part(s)."),
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=add_footer("❌ No matching parts."), parse_mode=ParseMode.HTML)
+        return
+
+    # Payment for all paid parts in selection
+    unit = int((series or {}).get("price_per_part") or paid_docs[0].get("price") or get_default_price())
+    pay_total = sum(int(d.get("price") or unit) for d in paid_docs)
+    tokens = [d.get("token") for d in paid_docs if d.get("token")]
+    part_labels = []
+    for d in paid_docs:
+        pn = d.get("part_number") or "?"
+        part_labels.append(f"PRT {pn}")
+
+    # Poster display
+    poster = (series or {}).get("poster_file_id") or (series or {}).get("poster_url") or ""
+    if not poster and paid_docs:
+        poster = paid_docs[0].get("poster_file_id") or paid_docs[0].get("poster_url") or ""
+
+    ref = f"grp_{secrets.token_hex(4)}"
+    track_pending_payment(user.id, ref)
+    if payments_collection is not None:
+        payments_collection.insert_one({
+            "reference": ref,
+            "user_id": user.id,
+            "chat_id": chat_id,
+            "amount": pay_total,
+            "status": "pending",
+            "created_at": datetime.utcnow(),
+            "cart_tokens": tokens,
+            "is_cart": True,
+            "series_token": main_token,
+            "auto_deliver": True,
+        })
+
+    free_note = f"\n🎁 Free sent: {len(free_docs)}" if free_docs else ""
+    caption = (
+        f"🎬 {style_title(str(title))}\n"
+        f"{style_sub('Parts')}: {', '.join(part_labels)}\n"
+        f"{style_sub('Pay')}: {pay_total} KES"
+        f"{free_note}"
+    )
+    caption = add_footer(apply_premium_emojis(caption))
+    plans = get_subscription_plans()
+    kb = build_payment_keyboard(None, ref, pay_total, user.id, plans, include_subs=False)
+
+    if poster:
+        try:
+            await send_html_safe(context.bot, chat_id, caption, reply_markup=kb, photo=poster)
+            return
+        except Exception as e:
+            logger.warning(f"group poster send: {e}")
+    await send_html_safe(context.bot, chat_id, caption, reply_markup=kb)
+
+
+async def show_king3_series_picker(update, context, series):
+    """King3 large series: poster + group size / type parts / get all once."""
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    main_token = series.get("token")
+    title = series.get("title") or "Series"
+    total = int(series.get("total_parts") or series.get("episode_count") or len(series.get("episodes") or []))
+    price_all = int(series.get("price") or 0)
+    unit = int(series.get("price_per_part") or get_default_price())
+    poster = series.get("poster_file_id") or series.get("poster_url") or ""
+
+    context.user_data["king3_token"] = main_token
+    context.user_data["awaiting_king3_parts"] = True
+
+    caption = (
+        f"🎬 {style_title(str(title))}\n"
+        f"{style_sub('Parts')}: {total}  ·  {style_sub('Each')}: {unit} KES\n"
+        f"{style_sub('Full')}: {price_all} KES\n"
+        f"{style_sub('Tap group · type 1,2,3 or 1-40 · Get All')}"
+    )
+    caption = add_footer(apply_premium_emojis(caption))
+
+    # Group size 2–20 in 4 columns
+    rows = []
+    nums = list(range(2, 21))
+    for i in range(0, len(nums), 4):
+        rows.append([
+            InlineKeyboardButton(f"Grp {n}", callback_data=f"k3grp_{main_token}_{n}")
+            for n in nums[i:i+4]
+        ])
+    rows.append([InlineKeyboardButton(f"🎯 GET ALL {total} ONCE — {price_all} KES", callback_data=f"k3all_{main_token}")])
+    rows.append([InlineKeyboardButton("◀️ Home", callback_data="back")])
+    kb = InlineKeyboardMarkup(rows)
+
+    if poster:
+        try:
+            await send_html_safe(context.bot, chat_id, caption, reply_markup=kb, photo=poster)
+            return
+        except Exception as e:
+            logger.warning(f"king3 poster: {e}")
+    await send_html_safe(context.bot, chat_id, caption, reply_markup=kb)
+
+
+async def show_king3_group_buttons(update, context, main_token: str, group_size: int):
+    """After user picks group size, show PRT range buttons for that grouping."""
+    query = update.callback_query
+    parts = get_series_parts_docs(main_token)
+    series = series_bundles_collection.find_one({"token": main_token}) if series_bundles_collection is not None else None
+    title = (series or {}).get("title") or "Series"
+    total = len(parts) or int((series or {}).get("total_parts") or 0)
+    gs = max(2, min(20, int(group_size)))
+    rows = []
+    btns = []
+    for i in range(0, total, gs):
+        start_p = i + 1
+        end_p = min(i + gs, total)
+        # Prefer real part numbers from docs
+        if parts:
+            chunk = parts[i:i+gs]
+            start_p = int(chunk[0].get("part_number") or start_p)
+            end_p = int(chunk[-1].get("part_number") or end_p)
+        label = f"PRT {start_p}-{end_p}" if start_p != end_p else f"PRT {start_p}"
+        btns.append(InlineKeyboardButton(label, callback_data=f"k3sel_{main_token}_{start_p}_{end_p}"))
+    for i in range(0, len(btns), 4):
+        rows.append(btns[i:i+4])
+    rows.append([InlineKeyboardButton("✏️ Type part numbers", callback_data=f"k3type_{main_token}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"k3back_{main_token}")])
+    kb = InlineKeyboardMarkup(rows)
+    text = add_footer(
+        f"🎬 <b>{escape_html(str(title))}</b>\n\n"
+        f"Group size: <b>{gs}</b>\n"
+        f"{style_sub('Tap a range · free auto · rest paid')}"
+    )
+    if query:
+        try:
+            await query.edit_message_caption(caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return
+        except Exception:
+            try:
+                await query.edit_message_text(text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                return
+            except Exception:
+                pass
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
 async def post_series_to_channel_with_parts(context, channel_id, poster_file_id, saved_movies, main_token, get_all_price, total_parts, upload_title, price_per_part=None, post_mode="parts", group_size=None):
     try:
         bot_link = f"https://t.me/{context.bot.username}?start={main_token}"
@@ -5663,26 +5924,26 @@ async def post_series_to_channel_with_parts(context, channel_id, poster_file_id,
         post_mode = (post_mode or "parts").lower()
 
         if post_mode == "large":
-            # Large series: single button only
+            # Large series: single button only → bot shows part picker
             keyboard_rows.append([InlineKeyboardButton("👉 Click here to get it", url=bot_link)])
         elif post_mode == "grouped" and group_size and int(group_size) >= 2:
             gs = max(2, min(20, int(group_size)))
-            # Group parts: PRT 1-2, PRT 3-4, ...
+            # Group deep-link: g_{main}_{startPart}_{endPart} → bot delivers free + charges paid parts in range
+            grp_btns = []
             for i in range(0, n_parts, gs):
                 chunk = saved_movies[i:i+gs]
                 if not chunk:
                     continue
-                start_p = chunk[0].get("part_number") or (i + 1)
-                end_p = chunk[-1].get("part_number") or (i + len(chunk))
-                # Deep-link first token of group; bot can expand if needed
-                tok = chunk[0].get("token") or main_token
+                start_p = int(chunk[0].get("part_number") or (i + 1))
+                end_p = int(chunk[-1].get("part_number") or (i + len(chunk)))
                 label = f"PRT {start_p}-{end_p}" if start_p != end_p else f"PRT {start_p}"
                 if len(label) > 18:
                     label = label[:16] + "…"
-                keyboard_rows.append([]) if not keyboard_rows or len(keyboard_rows[-1]) >= 4 else None
-                if not keyboard_rows or len(keyboard_rows[-1]) >= 4:
-                    keyboard_rows.append([])
-                keyboard_rows[-1].append(InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start={tok}"))
+                # payload must be 64 chars max, A-Za-z0-9_-
+                grp_payload = f"g_{main_token}_{start_p}_{end_p}"
+                grp_btns.append(InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start={grp_payload}"))
+            for i in range(0, len(grp_btns), 4):
+                keyboard_rows.append(grp_btns[i:i+4])
             keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL {n_parts} ONCE — {price_text}{discount_text}", url=bot_link)])
         else:
             # Default: individual PRT buttons (5 per row)
@@ -5813,7 +6074,29 @@ async def confronterisundefeated_cmd(update: Update, context: ContextTypes.DEFAU
         for movie in saved_movies:
             episodes.append({"private_link": f"https://t.me/{context.bot.username}?start={movie.get('token')}", "title": movie.get("title"), "button_title": movie.get("button_title", ""), "channel_id": "", "message_id": 0, "file_id": movie.get("file_id"), "file_type": movie.get("file_type", "video"), "token": movie.get("token")})
         
-        bundle_data = {"token": main_token, "title": f"{upload_title} ({total_parts} parts)", "button_title": clean_movie_title_for_button(prefix or "Collection"), "price": get_all_price, "original_price": price_per_movie * total_parts, "discount": discount, "total_parts": total_parts, "free_parts": sum(1 for m in saved_movies if m.get("is_free", False)), "category": "series", "description": f"Collection of {total_parts} parts. {discount} KES discount applied!", "poster_url": poster_url, "episodes": episodes, "episode_count": len(episodes), "created_at": datetime.utcnow(), "downloads": 0, "is_confronter_bundle": True, "is_collection": True}
+        bundle_data = {
+            "token": main_token,
+            "title": f"{upload_title} ({total_parts} parts)",
+            "button_title": clean_movie_title_for_button(prefix or "Collection"),
+            "price": get_all_price,
+            "original_price": price_per_movie * total_parts,
+            "discount": discount,
+            "price_per_part": price_per_movie,
+            "total_parts": total_parts,
+            "free_parts": sum(1 for m in saved_movies if m.get("is_free", False)),
+            "category": "series",
+            "description": f"Collection of {total_parts} parts.",
+            "poster_url": poster_url,
+            "poster_file_id": poster_file_id or "",
+            "episodes": episodes,
+            "episode_count": len(episodes),
+            "created_at": datetime.utcnow(),
+            "downloads": 0,
+            "is_confronter_bundle": True,
+            "is_collection": True,
+            "post_mode": (session or {}).get("post_mode") or "parts",
+            "group_size": (session or {}).get("group_size"),
+        }
         try:
             series_bundles_collection.insert_one(bundle_data)
         except Exception as e:
@@ -7963,9 +8246,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             items.append({"label": f"💰 TOTAL:", "value": f"{total} KES"})
         
-        checkout_text = render_menu_for_user(user_id, "🛒 CHECKOUT", items)
+        checkout_text = render_menu_for_user(user_id, style_title("Checkout"), items)
         checkout_text = add_footer(checkout_text)
-        checkout_text += apply_premium_emojis(f"\n\n💳 Choose payment method:") + get_datetime_footer()
         
         auth_url = None
         if get_card_payment_setting():
@@ -8400,7 +8682,7 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         ])
         await edit_or_send_message(
             query,
-            add_footer(f"💰 <b>My Wallet</b>\n\nBalance: <b>{bal} KES</b>\n\nMinimum top-up: {WALLET_MIN_TOPUP} KES.\nUse wallet balance when buying movies."),
+            add_footer(f"💰 {style_title('My Wallet')}\n{style_sub('Balance')}: {bal} KES\n{style_sub('Min top-up')}: {WALLET_MIN_TOPUP} KES"),
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
         )
@@ -8411,7 +8693,7 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="wallet_home")]])
         await edit_or_send_message(
             query,
-            add_footer(f"💰 <b>Top up Wallet</b>\n\nSend the amount in KES (minimum {WALLET_MIN_TOPUP}).\nExample: <code>50</code> or <code>100</code>"),
+            add_footer(f"💰 {style_title('Top up')}\n{style_sub('Min')} {WALLET_MIN_TOPUP} KES · e.g. <code>50</code>"),
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
         )
@@ -8428,6 +8710,94 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
             cat = "requested"
             page = 0
         await browse_category_movies(update, context, category=cat, page=page)
+        return
+
+    # --- King3 large-series picker ---
+    if data.startswith("k3grp_"):
+        # k3grp_{token}_{groupSize}
+        try:
+            rest = data[6:]
+            main_tok, gs_s = rest.rsplit("_", 1)
+            await show_king3_group_buttons(update, context, main_tok, int(gs_s))
+        except Exception as e:
+            logger.error(f"k3grp: {e}")
+            await query.answer("Error", show_alert=True)
+        return
+
+    if data.startswith("k3sel_"):
+        # k3sel_{token}_{start}_{end}
+        try:
+            rest = data[6:]
+            main_tok, s_s, e_s = rest.rsplit("_", 2)
+            start_p, end_p = int(s_s), int(e_s)
+            if start_p > end_p:
+                start_p, end_p = end_p, start_p
+            selected = list(range(start_p, end_p + 1))
+            series_g = series_bundles_collection.find_one({"token": main_tok}) if series_bundles_collection is not None else None
+            await deliver_free_parts_and_charge_paid(update, context, main_tok, selected, series=series_g)
+        except Exception as e:
+            logger.error(f"k3sel: {e}")
+            await query.answer("Error selecting parts", show_alert=True)
+        return
+
+    if data.startswith("k3all_"):
+        main_tok = data[6:]
+        series_g = series_bundles_collection.find_one({"token": main_tok}) if series_bundles_collection is not None else None
+        if not series_g:
+            await query.answer("Series not found", show_alert=True)
+            return
+        # Full series payment via existing get-all flow: reuse series token start path
+        context.user_data.pop("awaiting_king3_parts", None)
+        # Build payment for full series
+        price = int(series_g.get("price") or 0)
+        ref = f"sr_{secrets.token_hex(4)}"
+        track_pending_payment(user_id, ref)
+        if payments_collection is not None:
+            payments_collection.insert_one({
+                "reference": ref, "user_id": user_id, "series_token": main_tok,
+                "chat_id": query.message.chat_id if query.message else user_id,
+                "amount": price, "status": "pending", "created_at": datetime.utcnow(),
+                "auto_deliver": True,
+            })
+        poster = series_g.get("poster_file_id") or series_g.get("poster_url") or ""
+        caption = add_footer(apply_premium_emojis(
+            f"🎬 {style_title(str(series_g.get('title') or 'Series'))}\n"
+            f"🎯 {style_title('Get All Once')}\n"
+            f"{style_sub('Parts')}: {series_g.get('total_parts') or series_g.get('episode_count') or '?'}\n"
+            f"{style_sub('Pay')}: {price} KES"
+        ))
+        plans = get_subscription_plans()
+        kb = build_payment_keyboard(None, ref, price, user_id, plans, include_subs=False)
+        try:
+            if poster:
+                await send_html_safe(context.bot, query.message.chat_id, caption, reply_markup=kb, photo=poster)
+            else:
+                await edit_or_send_message(query, caption, reply_markup=kb, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"k3all: {e}")
+            await edit_or_send_message(query, caption, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    if data.startswith("k3type_"):
+        main_tok = data[7:]
+        context.user_data["king3_token"] = main_tok
+        context.user_data["awaiting_king3_parts"] = True
+        await edit_or_send_message(
+            query,
+            add_footer(
+                f"✏️ {style_title('Type parts')}\n"
+                f"{style_sub('e.g.')} <code>1,2,3</code>  ·  <code>1-40</code>  ·  <code>2-7,10</code>"
+            ),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back", callback_data=f"k3back_{main_tok}")]]),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data.startswith("k3back_"):
+        main_tok = data[7:]
+        series_g = series_bundles_collection.find_one({"token": main_tok}) if series_bundles_collection is not None else None
+        if series_g:
+            await show_king3_series_picker(update, context, series_g)
         return
 
     if data.startswith("stk_"):
@@ -8526,13 +8896,10 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         track_pending_payment(user_id, sub_ref)
         if payments_collection is not None:
             payments_collection.insert_one({"reference": sub_ref, "user_id": user_id, "plan": plan, "chat_id": query.message.chat.id, "amount": plan_info["price"], "status": "pending", "created_at": datetime.utcnow(), "type": "subscription", "is_subscription": True})
-        payment_text = add_footer(f"""🌴 <b>{plan_info['name']}</b>
-
-📅 Duration: {plan_info['days']} days
-💰 Price: <b>{plan_info['price']} KES</b>
-
-🔥 Get unlimited access to ALL movies!
-""" + apply_premium_emojis("💳 Choose payment method:") + get_datetime_footer())
+        payment_text = add_footer(apply_premium_emojis(
+            f"🌴 {style_title(plan_info['name'])}\n"
+            f"{style_sub('Days')}: {plan_info['days']}  ·  {style_sub('Pay')}: {plan_info['price']} KES"
+        ))
         auth_url, _ = initialize_paystack_payment(email=f"user{user_id}@telegram.bot", amount_kes=plan_info["price"], reference=sub_ref, metadata={"user_id": user_id, "plan": plan, "chat_id": update.effective_chat.id, "is_subscription": True}, plan=plan)
         keyboard = build_payment_keyboard(auth_url, sub_ref, plan_info["price"], user_id, plans)
         await edit_or_send_message(query, payment_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -9253,6 +9620,27 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop("phone_input_handled", None)
     await human_action(context, update.effective_chat.id, ChatAction.TYPING)
 
+    # King3: user typed part numbers e.g. 1,2,3 or 1-40
+    if context.user_data.get("awaiting_king3_parts"):
+        main_tok = context.user_data.get("king3_token")
+        if main_tok and phone and not phone.startswith("/"):
+            # Don't steal pure phone numbers meant for STK if looks like mpesa
+            looks_phone = bool(re.match(r"^(\+?254|0)\d{8,10}$", re.sub(r"\s", "", phone)))
+            if not looks_phone:
+                series_g = series_bundles_collection.find_one({"token": main_tok}) if series_bundles_collection is not None else None
+                max_p = int((series_g or {}).get("total_parts") or (series_g or {}).get("episode_count") or 9999)
+                selected = parse_part_selection_text(phone, max_part=max_p)
+                if selected:
+                    context.user_data.pop("awaiting_king3_parts", None)
+                    await deliver_free_parts_and_charge_paid(update, context, main_tok, selected, series=series_g)
+                    return
+                else:
+                    await update.message.reply_text(
+                        add_footer(f"❌ {style_sub('Try')} <code>1,2,3</code> · <code>1-40</code>"),
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
+
     # Wallet top-up amount entry
     if context.user_data.get("awaiting_wallet_topup"):
         context.user_data.pop("awaiting_wallet_topup", None)
@@ -9262,7 +9650,7 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             amount = 0
         if amount < WALLET_MIN_TOPUP:
             await update.message.reply_text(
-                add_footer(f"❌ Minimum top-up is {WALLET_MIN_TOPUP} KES. Send a higher amount or /start."),
+                add_footer(f"❌ {style_sub('Min')} {WALLET_MIN_TOPUP} KES"),
                 parse_mode=ParseMode.HTML,
             )
             return
@@ -9299,7 +9687,12 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 upsert=True,
             )
         await update.message.reply_text(
-            add_footer(build_mpesa_prompt_text(amount, extra_lines=[f"Wallet top-up {amount} KES"])),
+            add_footer(build_mpesa_prompt_text(
+                amount,
+                extra_lines=[f"💰 Adding {amount} KES to your wallet"],
+                user_id=user.id,
+                for_wallet_topup=True,
+            )),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -9949,10 +10342,9 @@ async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("◀️ Home", callback_data="back")],
     ])
     text = add_footer(
-        f"💰 <b>My Wallet</b>\n\n"
-        f"Balance: <b>{bal} KES</b>\n\n"
-        f"Minimum top-up: {WALLET_MIN_TOPUP} KES.\n"
-        f"Use wallet when buying — you'll see <b>Pay with Wallet</b> + balance."
+        f"💰 {style_title('My Wallet')}\n"
+        f"{style_sub('Balance')}: {bal} KES\n"
+        f"{style_sub('Min top-up')}: {WALLET_MIN_TOPUP} KES"
     )
     await reply_html_safe(update.message, text, reply_markup=kb)
 
@@ -10070,7 +10462,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             
             bundle_text = render_menu_for_user(user_id, "📦 BUNDLE DETAILS", items)
             bundle_text = add_footer(bundle_text)
-            bundle_text += apply_premium_emojis(f"\n\n💳 Choose payment method:") + get_datetime_footer()
+            bundle_text += ""
             
             ref = f"sr_{secrets.token_hex(4)}"
             if payments_collection is not None:
@@ -12748,7 +13140,7 @@ async def toggleprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ SHOW HOME ============
 async def browse_category_movies(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str = "requested", page: int = 0):
-    """Browse movies by category (requested / trending)."""
+    """Browse movies by category (requested / trending). Case-insensitive category match."""
     query = update.callback_query
     user = update.effective_user
     per_page = 8
@@ -12757,27 +13149,38 @@ async def browse_category_movies(update: Update, context: ContextTypes.DEFAULT_T
     total = 0
     if movies_collection is not None:
         try:
-            # Match category aliases
-            cats = [category]
             if category in ("requested", "most_requested"):
-                cats = ["requested", "most requested", "most_requested"]
+                # /uploadrequested saves category="requested"
+                cat_re = re.compile(r"^(requested|most[_\s-]?requested)$", re.I)
+                title = "Most requested"
             elif category == "trending":
-                cats = ["trending", "trend"]
-            q = {"category": {"$in": cats}}
+                cat_re = re.compile(r"^(trending|trend)$", re.I)
+                title = "Trending"
+            else:
+                cat_re = re.compile(f"^{re.escape(category)}$", re.I)
+                title = category.title()
+            q = {"category": {"$regex": cat_re}}
             total = movies_collection.count_documents(q)
             movies = list(movies_collection.find(q).sort("created_at", DESCENDING).skip(skip).limit(per_page))
         except Exception as e:
             logger.error(f"browse_category: {e}")
-    title = "Most requested" if category in ("requested", "most_requested") else category.title()
+            title = category.title()
+    else:
+        title = "Most requested" if category in ("requested", "most_requested") else category.title()
     if not movies:
-        text = add_footer(f"🔥 <b>{title}</b>\n\nNo movies in this category yet.")
+        text = add_footer(
+            f"{'🔥' if 'request' in title.lower() else '📈'} <b>{title}</b>\n\n"
+            f"No movies in this category yet.\n"
+            f"Admin: use /upload{'requested' if 'request' in title.lower() else 'trending'}."
+        )
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Home", callback_data="back")]])
         if query:
             await edit_or_send_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
         else:
             await context.bot.send_message(chat_id=user.id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
-    lines = [f"🔥 <b>{title}</b> ({total})", ""]
+    icon = "🔥" if "request" in title.lower() else "📈"
+    lines = [f"{icon} <b>{title}</b> · {total} movie(s)", ""]
     rows = []
     for m in movies:
         t = clean_movie_title_for_button(m.get("title") or "Movie", max_len=28)
@@ -12816,16 +13219,15 @@ async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
     # Home text matching Zello movies sketch
     brand = BOT_DISPLAY_NAME or MENU_TITLE or "Zello movies"
     lines = [
-        f"🎬 <b>Welcome to {escape_html(brand)}</b>",
-        f"Hello {escape_html(username_display)}.",
-        "Home of entertainment",
-        "Movies and series ✓",
+        f"🎬 {style_title(f'Welcome to {brand}')}",
+        f"{style_sub('Hello')} {escape_html(username_display)}",
+        style_sub("Movies & series"),
     ]
     if has_sub:
-        lines.append(f"\n🎉 Active: <b>{sub_type.title()} Pass</b>")
+        lines.append(f"🎉 {style_sub(sub_type.title() + ' Pass')}")
         if expiry:
-            lines.append(f"📅 Expires: {expiry.strftime('%Y-%m-%d')}")
-    lines.append(f"\n💰 Wallet: <b>{wallet_bal} KES</b>")
+            lines.append(f"📅 {expiry.strftime('%Y-%m-%d')}")
+    lines.append(f"💰 {style_sub('Wallet')}: {wallet_bal} KES")
     welcome_text = "\n".join(lines)
     welcome_text = add_footer(welcome_text)
     welcome_text = apply_premium_emojis(welcome_text)
@@ -12959,6 +13361,22 @@ Example: <code>Horror</code> or <code>Furious</code>
             await context.bot.send_message(chat_id=update.effective_chat.id, text=maint_text, reply_markup=maint_kb, parse_mode=ParseMode.HTML)
             return
 
+        # Grouped series deep-link from /confronterking2: g_{main}_{start}_{end}
+        if token.startswith("g_") and token.count("_") >= 3:
+            try:
+                # g_MAIN_START_END  (main may contain underscores rarely — use rsplit)
+                body = token[2:]  # after g_
+                main_tok, start_s, end_s = body.rsplit("_", 2)
+                start_p, end_p = int(start_s), int(end_s)
+                if start_p > end_p:
+                    start_p, end_p = end_p, start_p
+                selected = list(range(start_p, end_p + 1))
+                series_g = series_bundles_collection.find_one({"token": main_tok}) if series_bundles_collection is not None else None
+                await deliver_free_parts_and_charge_paid(update, context, main_tok, selected, series=series_g)
+                return
+            except Exception as ge:
+                logger.error(f"group start parse: {ge}")
+
         series = None
         cached = cache_get_token(token)
         if cached and cached[0] == 'series':
@@ -12974,6 +13392,10 @@ Example: <code>Horror</code> or <code>Furious</code>
             has_sub, sub_type, expiry, used, max_movies = has_active_subscription(user.id)
             if has_sub:
                 await forward_series(update, context, series, is_subscriber=True)
+                return
+            # King3 large series → interactive picker (not instant full payment)
+            if (series.get("post_mode") or "") == "large":
+                await show_king3_series_picker(update, context, series)
                 return
             existing_payment = None
             try:
@@ -13070,7 +13492,11 @@ Example: <code>Horror</code> or <code>Furious</code>
                     pass
 
             # Minimal payment message — NO long BUNDLE DETAILS block
-            payment_text = apply_premium_emojis(f"💳 <b>Pay {price} KES</b> to receive all {ep_count} movies\n\nChoose payment method:") + get_datetime_footer()
+            payment_text = add_footer(apply_premium_emojis(
+                f"🎯 {style_title('Get All Once')}\n"
+                f"{style_sub('Parts')}: {ep_count}\n"
+                f"{style_sub('Pay')}: {price} KES"
+            ))
             auth_url = None
             keyboard = build_payment_keyboard(auth_url, ref, price, user.id, plans, include_subs=True)
             if get_cart_enabled():
@@ -13137,16 +13563,12 @@ Example: <code>Horror</code> or <code>Furious</code>
         plans = get_subscription_plans()
         poster_url = movie.get("poster_url", "")
 
-        items = []
-        items.append({"label": "🎬 Title:", "value": clean_movie_title_for_button(movie['title'])})
-        desc = movie.get('description', '')
-        if desc: items.append({"label": "📝 Desc:", "value": desc[:40]})
-        items.append({"label": "💳 Price:", "value": f"{price} KES"})
-        items.append({"label": "🏷️ Category:", "value": movie.get('category', 'movie').title()})
-
-        caption = render_menu_for_user(user.id, "🎦 𝐌𝐨𝐯𝐢𝐞 𝐈𝐧𝐟𝐨𝐫𝐦𝐚𝐭𝐢𝐨𝐧", items)
-        caption = add_footer(caption)
-        caption += apply_premium_emojis(f"\n\n💳 Choose payment method:") + get_datetime_footer()
+        mtitle = clean_movie_title_for_button(movie.get('title') or 'Movie')
+        caption = (
+            f"🎬 {style_title(mtitle)}\n"
+            f"{style_sub('Pay')}: {price} KES"
+        )
+        caption = add_footer(apply_premium_emojis(caption))
 
         ref = f"mv_{secrets.token_hex(4)}"
         asyncio.create_task(asyncio.to_thread(track_pending_payment, user.id, ref))
@@ -13222,7 +13644,7 @@ async def handle_subscription_payment(update: Update, context: ContextTypes.DEFA
     
     payment_text = render_menu_for_user(user.id, "🎟️ SUBSCRIPTION", items)
     payment_text = add_footer(payment_text)
-    payment_text += apply_premium_emojis(f"\n\n🔥 Get unlimited access to ALL movies!\n💳 Choose payment method:") + get_datetime_footer()
+    payment_text += apply_premium_emojis(f"\n{style_sub('Unlimited access')} · {style_sub('Pay')}")
     
     auth_url, _ = initialize_paystack_payment(email=f"user{user.id}@telegram.bot", amount_kes=plan_info["price"], reference=ref, metadata={"user_id": user.id, "plan": plan, "chat_id": update.effective_chat.id, "is_subscription": True}, plan=plan)
     keyboard = build_payment_keyboard(auth_url, ref, plan_info["price"], user.id, plans)
@@ -13861,7 +14283,7 @@ async def handle_bot_callbacks(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
         keyboard = build_payment_keyboard(auth_url, ref, initial, user_id, plans)
-        text = add_footer(f"💳 <b>Bot Subscription</b>\n\n💰 Amount: <b>{initial} KES</b>\n\nChoose payment method:")
+        text = add_footer(f"💳 {style_title('Bot Subscription')}\n{style_sub('Pay')}: {initial} KES")
         await edit_or_send_message(query, text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
     elif data == "bot_info":
