@@ -334,7 +334,7 @@ def _load_premium_emoji_map() -> dict:
         "🏷": "5431499171045581032",
         "★": "5435957248314579621",
         "☆": "5435957248314579621",
-        "💲": "5375296873982604963",
+        "💳": "5375296873982604963",
         "💵": "5375296873982604963",
         "🔵": "5471952986970267163",
         "🟠": "5438496463044752972",
@@ -353,7 +353,7 @@ def _load_premium_emoji_map() -> dict:
         "📼": "5375464961822695044",
         "🔉": "5469903029144657419",
         "🔊": "5469903029144657419",
-        "💲": "5375296873982604963",
+        "💳": "5375296873982604963",
         "🤑": "5375296873982604963",
         "🧾": "5431577498364158238",
         "🪪": "5422683699130933153",
@@ -434,7 +434,7 @@ def _load_premium_emoji_map() -> dict:
         "💰": "5409048419211682843",
         "💵": "5375296873982604963",
         "💸": "5375296873982604963",
-        "💲": "5366352986840772584",
+        "💳": "5366352986840772584",
         "💳": "5422683699130933153",
         "🪙": "5379600444098093058",
         "🛒": "5431499171045581032",
@@ -1091,7 +1091,7 @@ def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amo
     lines = []
     if for_wallet_topup:
         pay, credit, bonus = wallet_topup_credit(amt)
-        lines.append(f"💲 {style_title('Wallet Top-up')}")
+        lines.append(f"💳 {style_title('Wallet Top-up')}")
         lines.append(f"{style_sub('You pay')}: {pay} KES")
         if bonus > 0:
             lines.append(f"{style_sub('Bonus 20%')}: +{bonus} KES")
@@ -4614,13 +4614,16 @@ def short_btn_label(index: int, title: str, max_len: int = 28) -> str:
 
 
 
-# ---- Rotating arrow / bullet styles for channel posts (dashboard sends) ----
+# ---- Rotating arrow / bullet styles for channel posts (auto-change each album) ----
 CHANNEL_ARROW_STYLES = [
     "⇒", "➔", "➧", "➨", "➯", "➮", "➭", "➫", "➺", "➻", "➾", "➩", "➤", "➣", "➜", "➙", "➛",
-    "☛", "➤", "◆", "◇", "◈", "◉", "●", "◆", "✦", "✧", "✯", "❖",
-    "⬥", "⬧", "◊", "☑", "✒", "❥",
+    "☛", "➤", "◆", "◇", "◈", "◉", "✦", "✧", "✯", "❖", "⬥", "⬧", "◊", "❥",
 ]
+CHANNEL_BULLET_STYLES = ["●", "◆", "◇", "◈", "◉", "✦", "✧", "❖", "⬥", "▪", "▫", "■", "□"]
+CHANNEL_TAP_STYLES = ["👇", "👉", "➤", "➔", "➨", "✦", "●"]
 _arrow_idx = {"n": 0}
+_bullet_idx = {"n": 0}
+_tap_idx = {"n": 0}
 
 def next_channel_arrow() -> str:
     """One arrow style per album/post — advances only when a new album starts."""
@@ -4631,6 +4634,24 @@ def next_channel_arrow() -> str:
         return styles[i]
     except Exception:
         return "⇒"
+
+def next_channel_bullet() -> str:
+    styles = CHANNEL_BULLET_STYLES
+    try:
+        i = int(_bullet_idx.get("n", 0)) % len(styles)
+        _bullet_idx["n"] = i + 1
+        return styles[i]
+    except Exception:
+        return "●"
+
+def next_channel_tap() -> str:
+    styles = CHANNEL_TAP_STYLES
+    try:
+        i = int(_tap_idx.get("n", 0)) % len(styles)
+        _tap_idx["n"] = i + 1
+        return styles[i]
+    except Exception:
+        return "👇"
 
 def decorate_title_list(titles: list, arrow: str = None) -> str:
     """Prefix every title in THIS album with the SAME arrow (no mix inside one post)."""
@@ -4683,33 +4704,44 @@ def dedupe_movie_items(items: list, title_key_candidates=("button_title", "title
 
 
 def build_album_caption(movies: list, price_per: int = None, get_all_price: int = None) -> str:
-    """Full titles (not truncated mid-word when possible). Serif/italic footer lines."""
+    """Channel-style album caption:
+    ⇒ 1. Full title
+    ⇒ 2. Full title
+    ● One movie 10KES
+    👇 Tap a movie to get it
+    Serif bold titles for price lines; italic body hint. Full titles (not mid-word cut).
+    """
     if not movies:
-        return "Tap a movie below"
+        return style_sub("Tap a movie to get it or Get all once")
     arrow = next_channel_arrow()
     lines = []
     for m in movies:
-        raw = (m.get("title") or "Movie").strip()
+        raw = (m.get("title") or m.get("button_title") or "Movie").strip()
         title = re.sub(r"\s+", " ", raw)
         title = re.sub(r"^\d+[\).\-:]\s*", "", title)
-        # Prefer full title; only soft-trim if caption would overflow later
-        if len(title) > 70:
-            title = title[:69].rstrip() + "…"
+        # Keep full title; only trim if hard limit forces it later
+        if len(title) > 80:
+            # cut at last space before 80
+            cut = title[:80]
+            if " " in cut:
+                cut = cut.rsplit(" ", 1)[0]
+            title = cut + "…"
         lines.append(f"{arrow} {len(lines)+1}. {title}")
-    body = chr(10).join(lines)
+    body = "\n".join(lines)
+    bullet = next_channel_bullet()
+    tap = next_channel_tap()
     footer = []
-    if price_per is not None:
-        footer.append(f"$ {style_title('One movie')} {price_per}KES")
-    if get_all_price is not None:
-        footer.append(f"🎯 {style_title('Get all once')} {get_all_price}KES")
-    footer.append(style_sub("Tap a movie to get it"))
-    caption = body + ("\n\n" + "\n".join(footer) if footer else "")
-    if len(caption) > 1000:
-        # shrink titles gradually
-        while len(caption) > 1000 and lines:
+    if price_per is not None and int(price_per or 0) >= 0:
+        footer.append(f"{bullet} {style_title('One movie')} {int(price_per)}KES")
+    if get_all_price is not None and int(get_all_price or 0) > 0:
+        footer.append(f"{bullet} {style_title('Get all once')} {int(get_all_price)}KES")
+    footer.append(f"{tap} {style_sub('Tap a movie to get it or Get all once')}")
+    caption = body + "\n\n" + "\n".join(footer)
+    if len(caption) > 1020:
+        while len(caption) > 1020 and len(lines) > 2:
             lines.pop()
-            body = chr(10).join(lines) + (chr(10) + f"… +{len(movies)-len(lines)} more" if len(movies) > len(lines) else "")
-            caption = body + ("\n\n" + "\n".join(footer) if footer else "")
+            body = "\n".join(lines) + f"\n… +{len(movies)-len(lines)} more"
+            caption = body + "\n\n" + "\n".join(footer)
     try:
         caption = apply_premium_emojis(caption)
     except Exception:
@@ -5208,14 +5240,9 @@ async def post_to_channel_as_album_with_buttons(context, channel_id, poster_file
         
         movie_buttons = []
         for i, movie in enumerate(saved_movies[:9]):
-            title_display = clean_movie_title_for_button(movie.get('title', 'Unknown'))
-            part_match = re.search(r'(\d+)$', title_display)
-            if part_match:
-                title_display = f"PRT {part_match.group(1)}"
-            else:
-                if len(title_display) > 16:
-                    title_display = title_display[:14] + "…"
-            movie_buttons.append(InlineKeyboardButton(title_display, callback_data=f"get_movie_{movie.get('token')}"))
+            # Show readable title on button (like channel sample), not over-truncated PRT only
+            title_display = clean_movie_title_for_button(movie.get('title') or movie.get('button_title') or 'Movie', max_len=22)
+            movie_buttons.append(InlineKeyboardButton(title_display, url=f"https://t.me/{context.bot.username}?start={movie.get('token')}"))
         
         keyboard_rows = []
         for i in range(0, min(len(movie_buttons), 9), 3):
@@ -5223,14 +5250,14 @@ async def post_to_channel_as_album_with_buttons(context, channel_id, poster_file
             if row:
                 keyboard_rows.append(row)
         
-        keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL {total_movies} ONCE — {price_text}", callback_data=f"get_movie_{main_token}")])
-        keyboard_rows.append([InlineKeyboardButton("📢 Share Collection", url=f"https://t.me/share/url?url={bot_link}")])
+        keyboard_rows.append([InlineKeyboardButton(f"🎯 GET ALL ONCE — {price_text}", url=bot_link)])
         keyboard = InlineKeyboardMarkup(keyboard_rows)
         
-        # Numbered list + styled price lines (full titles via build_album_caption when possible)
-        _list = build_album_caption(saved_movies[:9], price_per=price, get_all_price=(price * total_movies if price else 0))
-        album_caption = apply_premium_emojis(
-            f"{style_title(str(upload_title))}\n\n{_list}"
+        # Full titles + serif One movie / Get all once (screenshot style)
+        album_caption = build_album_caption(
+            saved_movies[:9],
+            price_per=price,
+            get_all_price=(price * total_movies if price and total_movies else 0),
         )
         
         if poster_file_ids:
@@ -8741,10 +8768,10 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         await edit_or_send_message(
             query,
             add_footer(
-                f"💲 {style_title('My Wallet')}\n"
+                f"💳 {style_title('My Wallet')}\n"
                 f"{style_sub('Balance')}: {bal} KES\n"
                 f"{style_sub('Min top-up')}: {WALLET_MIN_TOPUP} KES\n"
-                f"💲 {style_sub('Bonus 20% from 100 KES+')}"
+                f"💳 {style_sub('Bonus 20% from 100 KES+')}"
             ),
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
@@ -8761,7 +8788,7 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
             await edit_or_send_message(
                 query,
                 add_footer(
-                    f"💲 {style_title('Active operation')}\n"
+                    f"💳 {style_title('Active operation')}\n"
                     f"{style_sub('You were selecting series parts.')}\n"
                     f"{style_sub('Continue that, or cancel and top up wallet.')}"
                 ),
@@ -8774,9 +8801,9 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         await edit_or_send_message(
             query,
             add_footer(
-                f"💲 {style_title('Top up')}\n"
+                f"💳 {style_title('Top up')}\n"
                 f"{style_sub('Min')} {WALLET_MIN_TOPUP} KES  ·  e.g. <code>50</code>\n"
-                f"💲 {style_sub('Bonus 20% from 100 KES+')}"
+                f"💳 {style_sub('Bonus 20% from 100 KES+')}"
             ),
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
@@ -8800,9 +8827,9 @@ Example: <code>Action</code> or <code>Horror</code> or <code>Furious</code>
         await edit_or_send_message(
             query,
             add_footer(
-                f"💲 {style_title('Top up')}\n"
+                f"💳 {style_title('Top up')}\n"
                 f"{style_sub('Min')} {WALLET_MIN_TOPUP} KES  ·  e.g. <code>50</code>\n"
-                f"💲 {style_sub('Bonus 20% from 100 KES+')}"
+                f"💳 {style_sub('Bonus 20% from 100 KES+')}"
             ),
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
@@ -10481,10 +10508,10 @@ async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("◀️ Home", callback_data="back")],
     ])
     text = add_footer(
-        f"💲 {style_title('My Wallet')}\n"
+        f"💳 {style_title('My Wallet')}\n"
         f"{style_sub('Balance')}: {bal} KES\n"
         f"{style_sub('Min top-up')}: {WALLET_MIN_TOPUP} KES\n"
-        f"💲 {style_sub('Bonus 20% from 100 KES+')}"
+        f"💳 {style_sub('Bonus 20% from 100 KES+')}"
     )
     await reply_html_safe(update.message, text, reply_markup=kb)
 
@@ -13286,10 +13313,11 @@ async def toggleprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ SHOW HOME ============
 async def browse_series_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    """List series from /confronterking /confronterking2 /confronterking3 (series_bundles)."""
+    """List series. Button mode = text buttons only; poster mode = album + buttons."""
     query = update.callback_query
     user = update.effective_user
-    per_page = 8
+    mode = get_display_mode()
+    per_page = 20 if mode == "button" else 9
     skip = page * per_page
     series_list = []
     total = 0
@@ -13334,6 +13362,34 @@ async def browse_series_page(update: Update, context: ContextTypes.DEFAULT_TYPE,
     rows.append([InlineKeyboardButton("◀️ Home", callback_data="back")])
     text = add_footer(f"🎥 {style_title('Series')} · {total}")
     kb = InlineKeyboardMarkup(rows)
+
+    # Poster mode: album of series posters then buttons
+    if mode != "button":
+        media = []
+        for s in series_list[:9]:
+            pfid = (s.get("poster_file_id") or "").strip()
+            pu = (s.get("poster_url") or "").strip()
+            try:
+                p = await resolve_safe_photo(context.bot, pfid, pu, context="series_album")
+            except Exception:
+                p = None
+            if p is not None and p not in media:
+                media.append(p)
+        chat_id = user.id
+        if media:
+            try:
+                # Fake movie-like dicts for caption helper
+                fake = [{"title": (s.get("button_title") or s.get("title") or "Series")} for s in series_list[:9]]
+                await send_album_chunked(
+                    context.bot, chat_id, media,
+                    caption=build_album_caption(fake),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.warning(f"series album: {e}")
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
     if query:
         await edit_or_send_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
     else:
@@ -13450,7 +13506,7 @@ async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
         lines.append(f"🎉 {style_sub(sub_type.title() + ' Pass')}")
         if expiry:
             lines.append(f"📅 {expiry.strftime('%Y-%m-%d')}")
-    lines.append(f"💲 {style_sub('Wallet')}: {wallet_bal} KES")
+    lines.append(f"💳 {style_sub('Wallet')}: {wallet_bal} KES")
     welcome_text = "\n".join(lines)
     welcome_text = add_footer(welcome_text)
     welcome_text = apply_premium_emojis(welcome_text)
@@ -13458,7 +13514,7 @@ async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
     # Home: wallet | cart · search · trending | requested · series | channels · purchases · admin
     keyboard = [
         [
-            InlineKeyboardButton("💲 My Wallet", callback_data="wallet_home"),
+            InlineKeyboardButton("💳 My Wallet", callback_data="wallet_home"),
             InlineKeyboardButton(f"🛒 Cart ({cart_count})", callback_data="cart_view"),
         ],
         [InlineKeyboardButton("🔍 Search movies", callback_data="search_movies")],
