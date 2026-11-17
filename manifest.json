@@ -1,7 +1,7 @@
 {
-  "name": "Vegaz App",
-  "short_name": "Vegazchats",
-  "description": "Vegaz Movie Bot Admin Dashboard",
+  "name": "Zello App",
+  "short_name": "zelloempire",
+  "description": "Zello Movie Bot Admin Dashboard",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
@@ -9,13 +9,13 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "https://i.imgur.com/o3xrrLP.jpeg",
+      "src": "https://i.imgur.com/scCjpJb.jpeg",
       "sizes": "192x192",
       "type": "image/jpeg",
       "purpose": "any maskable"
     },
     {
-      "src": "https://i.imgur.com/o3xrrLP.jpeg",
+      "src": "https://i.imgur.com/scCjpJb.jpeg",
       "sizes": "512x512",
       "type": "image/jpeg",
       "purpose": "any maskable"
