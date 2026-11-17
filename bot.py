@@ -18672,6 +18672,64 @@ def makamesco_callback():
 
             async def _deliver():
                 try:
+                    # Wallet top-up (ref starts with wtop_ or pending/payment flagged)
+                    pay_rec = None
+                    try:
+                        if payments_collection is not None and ref:
+                            pay_rec = payments_collection.find_one({"reference": ref})
+                    except Exception:
+                        pay_rec = None
+                    is_wtop = (
+                        str(ref or "").startswith("wtop_")
+                        or bool(pending.get("is_wallet_topup"))
+                        or (pay_rec and (pay_rec.get("is_wallet_topup") or pay_rec.get("type") == "wallet_topup"))
+                    )
+                    if is_wtop:
+                        try:
+                            top_amt = int(
+                                (pay_rec or {}).get("amount")
+                                or pending.get("price")
+                                or pending.get("amount")
+                                or amount
+                                or 0
+                            )
+                        except Exception:
+                            top_amt = int(amount or 0)
+                        pay, credit, bonus = wallet_topup_credit(top_amt)
+                        new_bal = add_wallet_balance(user_id, credit, reason="topup", ref=ref)
+                        try:
+                            if payments_collection is not None and ref:
+                                payments_collection.update_one(
+                                    {"reference": ref},
+                                    {"$set": {
+                                        "status": "success",
+                                        "is_wallet_topup": True,
+                                        "type": "wallet_topup",
+                                        "credited": credit,
+                                        "bonus": bonus,
+                                        "paid_at": datetime.utcnow(),
+                                    }},
+                                    upsert=True,
+                                )
+                        except Exception:
+                            pass
+                        bonus_line = f"\n{style_sub('Bonus')}: +{bonus} KES" if bonus else ""
+                        await application.bot.send_message(
+                            chat_id=chat_id,
+                            text=add_footer(
+                                f"✅ {style_title('Wallet topped up')}\n"
+                                f"{style_sub('Credited')}: +{credit} KES{bonus_line}\n"
+                                f"{style_sub('Balance')}: {new_bal} KES"
+                            ),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("💳 My Wallet", callback_data="wallet_home")],
+                                [InlineKeyboardButton("🏠 Home", callback_data="back")],
+                            ]),
+                        )
+                        logger.info(f"Wallet topup (makamesco) user={user_id} pay={pay} credit={credit} bonus={bonus} bal={new_bal} ref={ref}")
+                        return
+
                     if is_subscription and plan:
                         create_subscription(user_id, plan, ref or checkout_id)
                         plan_info = get_subscription_plans().get(plan, {})
