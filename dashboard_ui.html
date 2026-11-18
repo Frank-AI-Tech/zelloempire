@@ -1019,8 +1019,11 @@
             const titles=[];
             Array.from(selectedMovies).forEach(tok=>{
                 const m=(allMovies||[]).find(x=>x.token===tok);
-                if(m&&m.title) titles.push('➠ '+m.title);
+                if(m&&(m.title||m.button_title)) titles.push((m.title||m.button_title||'').trim());
             });
+            const el=document.getElementById('albumTitle');
+            if(el) el.value = titles.map((t,i)=>(i+1)+'. '+t).join('\n');
+        });
             const el=document.getElementById('albumTitle');
             if(el) el.value = titles.join(' , ');
         }
@@ -2062,4 +2065,4 @@ function processEditPosterFile(file){
 </div>
 
 </body>
-                    </html>
+    </html>
