@@ -4776,10 +4776,11 @@ def build_album_caption(movies: list, price_per: int = None, get_all_price: int 
     tap = next_channel_tap()
     footer = []
     if price_per is not None and int(price_per or 0) >= 0:
-        footer.append(f"{bullet} {style_title('One movie')} {int(price_per)}KES")
+        footer.append(f"{bullet} {style_title('One movie')} {style_title(str(int(price_per)) + 'KES')}")
     if get_all_price is not None and int(get_all_price or 0) > 0:
-        footer.append(f"{bullet} {style_title('Get all once')} {int(get_all_price)}KES")
-    footer.append(f"{tap} {style_sub('Tap a movie to get it or Get all once')}")
+        n = len(movies)
+        footer.append(f"{bullet} {style_title(str(n) + ' movie(s)')} · {style_title(str(int(get_all_price)) + ' KES')}")
+    footer.append(f"{tap} {style_sub('Tap a movie to get it, or GET ALL ONCE')}")
     caption = body + "\n\n" + "\n".join(footer)
     if len(caption) > 1020:
         while len(caption) > 1020 and len(lines) > 2:
@@ -13448,12 +13449,10 @@ async def browse_series_page(update: Update, context: ContextTypes.DEFAULT_TYPE,
     total = 0
     if series_bundles_collection is not None:
         try:
+            # Only real series from /confronterking, /Confronterking2, /Confronterking3
+            # Exclude album "GET ALL ONCE" single-movie groups (is_collection without is_confronter_bundle)
             q = {
-                "$or": [
-                    {"category": {"$regex": re.compile(r"^series$", re.I)}},
-                    {"is_confronter_bundle": True},
-                    {"is_collection": True},
-                ]
+                "is_confronter_bundle": True,
             }
             total = series_bundles_collection.count_documents(q)
             series_list = list(
@@ -19737,11 +19736,10 @@ def album_post():
     if caption_override:
         caption = apply_premium_emojis(caption_override)
     else:
-        price_line = f"● One movie {unit}KES  ● {n} movie(s) · {pay_total} KES"
+        price_line = f"● {style_title('One movie')} {style_title(str(unit)+'KES')}  ● {style_title(str(n)+' movie(s)')} · {style_title(str(pay_total)+' KES')}"
         if discount > 0:
             price_line += f"  (🎁 {n//5} free)"
-        # titles_block uses ONE arrow for whole album; keep 👇 tip line
-        caption = f"<b>{escape_html(album_title)}</b>\n\n{titles_block}\n\n{price_line}\n👇 Tap a movie to get it, or GET ALL ONCE"
+        caption = f"<b>{escape_html(album_title)}</b>\n\n{titles_block}\n\n{price_line}\n{style_sub('👇 Tap a movie to get it, or GET ALL ONCE')}"
         try:
             caption = apply_premium_emojis(caption)
         except Exception:
