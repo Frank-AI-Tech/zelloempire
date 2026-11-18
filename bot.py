@@ -1,4 +1,4 @@
-##Excomunicado
+
 import os
 import logging
 import secrets
@@ -8214,21 +8214,42 @@ async def handle_admin_reply_callback(update: Update, context: ContextTypes.DEFA
 
 # ============ FIXED KEYBOARD HELPER ============
 def add_cart_button_to_keyboard(keyboard: InlineKeyboardMarkup, token: str) -> InlineKeyboardMarkup:
+    """Insert Add-to-Cart paired with Cart on one row (2-col). Avoid duplicate full-width rows."""
     if not get_cart_enabled():
         return keyboard
-    
+
     if isinstance(keyboard.inline_keyboard, tuple):
         keyboard_rows = list(keyboard.inline_keyboard)
     else:
         keyboard_rows = keyboard.inline_keyboard.copy() if keyboard.inline_keyboard else []
-    
+
     cb = f"cart_add_{token}"
     if len(cb.encode("utf-8")) > 64:
         import hashlib
         h = hashlib.md5(str(token).encode("utf-8")).hexdigest()[:12]
         cb = f"ca_h_{h}"
-    keyboard_rows.insert(0, [InlineKeyboardButton(f"Add to Cart ➕", callback_data=cb)])
-    
+
+    # Already has an Add to Cart? skip
+    for row in keyboard_rows:
+        for btn in row:
+            data = getattr(btn, "callback_data", None) or ""
+            if str(data).startswith(("cart_add_", "ca_h_", "ca_")):
+                return InlineKeyboardMarkup(keyboard_rows)
+
+    add_btn = InlineKeyboardButton("🎥 Add to Cart", callback_data=cb)
+
+    # Prefer pairing with existing Cart button row
+    for i, row in enumerate(keyboard_rows):
+        texts = " ".join([(getattr(b, "text", "") or "") for b in row]).lower()
+        datas = " ".join([(getattr(b, "callback_data", "") or "") for b in row]).lower()
+        if "cart" in texts or "cart_view" in datas:
+            if len(row) == 1:
+                keyboard_rows[i] = [add_btn, row[0]]
+                return InlineKeyboardMarkup(keyboard_rows)
+            break
+
+    # Otherwise put Add to Cart on its own row at top (still clean)
+    keyboard_rows.insert(0, [add_btn])
     return InlineKeyboardMarkup(keyboard_rows)
 
 
@@ -10766,7 +10787,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 asyncio.create_task(asyncio.to_thread(payments_collection.insert_one, _pay_doc))
             auth_url = None
             plans = get_subscription_plans()
-            keyboard = build_payment_keyboard(auth_url, ref, price, user_id, plans)
+            keyboard = build_payment_keyboard(auth_url, ref, price, user_id, plans, movie_token=movie_token)
             if get_cart_enabled():
                 keyboard = add_cart_button_to_keyboard(keyboard, movie_token)
             _eps = (series.get('episodes') or [])[:21]
@@ -10800,7 +10821,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 if not url:
                     return
                 try:
-                    new_kb = build_payment_keyboard(url, _ref, _price, _uid, _plans)
+                    new_kb = build_payment_keyboard(url, _ref, _price, _uid, _plans, movie_token=_tk)
                     if get_cart_enabled():
                         new_kb = add_cart_button_to_keyboard(new_kb, _tk)
                     await context.bot.edit_message_reply_markup(chat_id=_chat, message_id=_message.message_id, reply_markup=new_kb)
@@ -10883,7 +10904,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     caption += apply_premium_emojis(f"\n\n💳 ᴄʜᴏᴏꜱᴇ ᴘᴀʏᴍᴇɴᴛ ᴍᴇᴛʜᴏᴅ:") + get_datetime_footer()
     
     auth_url = None
-    keyboard = build_payment_keyboard(auth_url, ref, price, user_id, plans)
+    keyboard = build_payment_keyboard(auth_url, ref, price, user_id, plans, movie_token=movie_token)
     if get_cart_enabled():
         keyboard = add_cart_button_to_keyboard(keyboard, movie_token)
     reply_markup = keyboard
@@ -10951,7 +10972,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         if not url or _msg is None:
             return
         try:
-            new_kb = build_payment_keyboard(url, _ref, _price, _uid, _plans)
+            new_kb = build_payment_keyboard(url, _ref, _price, _uid, _plans, movie_token=_tk)
             if get_cart_enabled():
                 new_kb = add_cart_button_to_keyboard(new_kb, _tk)
             await context.bot.edit_message_reply_markup(chat_id=_chat, message_id=_msg.message_id, reply_markup=new_kb)
@@ -13945,7 +13966,7 @@ Example: <code>Horror</code> or <code>Furious</code>
                 f"{style_sub('Pay')}: {price} KES"
             ))
             auth_url = None
-            keyboard = build_payment_keyboard(auth_url, ref, price, user.id, plans, include_subs=True)
+            keyboard = build_payment_keyboard(auth_url, ref, price, user.id, plans, include_subs=True, movie_token=token)
             if get_cart_enabled():
                 keyboard = add_cart_button_to_keyboard(keyboard, token)
             sent_msg = await context.bot.send_message(chat_id=chat_id, text=payment_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -13958,7 +13979,7 @@ Example: <code>Horror</code> or <code>Furious</code>
                 if not url:
                     return
                 try:
-                    new_kb = build_payment_keyboard(url, _ref, _price, user.id, _plans)
+                    new_kb = build_payment_keyboard(url, _ref, _price, user.id, _plans, movie_token=_token)
                     if get_cart_enabled():
                         new_kb = add_cart_button_to_keyboard(new_kb, _token)
                     await message.edit_reply_markup(reply_markup=new_kb)
@@ -14031,7 +14052,7 @@ Example: <code>Horror</code> or <code>Furious</code>
             if not url:
                 return
             try:
-                new_kb = build_payment_keyboard(url, _ref, _price, user.id, _plans, include_subs=False)
+                new_kb = build_payment_keyboard(url, _ref, _price, user.id, _plans, include_subs=False, movie_token=_token)
                 if get_cart_enabled():
                     new_kb = add_cart_button_to_keyboard(new_kb, _token)
                 if message.photo:
@@ -14042,7 +14063,7 @@ Example: <code>Horror</code> or <code>Furious</code>
                 logger.debug(f"Card URL attach skipped: {e}")
 
         auth_url = None
-        keyboard = build_payment_keyboard(auth_url, ref, price, user.id, plans, include_subs=False)
+        keyboard = build_payment_keyboard(auth_url, ref, price, user.id, plans, include_subs=False, movie_token=token)
         if get_cart_enabled(): keyboard = add_cart_button_to_keyboard(keyboard, token)
         reply_markup = keyboard
         chat_id = update.effective_chat.id
