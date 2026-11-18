@@ -2243,16 +2243,19 @@ def build_payment_keyboard(auth_url, ref, price, user_id, plans, include_subs=Tr
     keyboard.append([InlineKeyboardButton("📱 Pay with M-Pesa", callback_data=f"stk_{ref}_{price}")])
     if get_card_payment_setting():
         keyboard.append([InlineKeyboardButton("💳 Pay with Card", url=auth_url or "https://paystack.com/pay")])
-    # Cart on payment screens
+    # Cart row: pair Add to Cart + Cart (2 per row); long pay buttons stay full width
     if show_cart and get_cart_enabled():
         try:
             cart_n = len(get_user_cart(user_id))
         except Exception:
             cart_n = 0
-        row = [InlineKeyboardButton(f"🛒 Cart ({cart_n})", callback_data="cart_view")]
         if movie_token:
-            row.insert(0, InlineKeyboardButton("🎥 Add to Cart", callback_data=f"cart_add_{movie_token}"))
-        keyboard.append(row)
+            keyboard.append([
+                InlineKeyboardButton("🎥 Add to Cart", callback_data=f"cart_add_{movie_token}"),
+                InlineKeyboardButton(f"🛒 Cart ({cart_n})", callback_data="cart_view"),
+            ])
+        else:
+            keyboard.append([InlineKeyboardButton(f"🛒 Cart ({cart_n})", callback_data="cart_view")])
     if include_subs and get_subscription_enabled():
         keyboard.append([
             InlineKeyboardButton(f"ᴡᴇᴇᴋʟʏ ({plans['weekly']['price']} KES)", callback_data=f"sub_weekly_{user_id}"),
@@ -10833,13 +10836,29 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         _pay_doc = {"reference": ref, "user_id": user_id, "movie_token": movie_token, "chat_id": query.message.chat.id if query else update.effective_chat.id, "amount": price, "status": "pending", "created_at": datetime.utcnow(), "payment_method": None, "auto_deliver": True, "is_subscription": False}
         asyncio.create_task(asyncio.to_thread(payments_collection.insert_one, _pay_doc))
     
+    def _pretty_category(raw):
+        c = (raw or "movie").strip().lower().replace("_", " ").replace("-", " ")
+        if c in ("requested", "most requested", "mostrequested"):
+            return "Most Requested"
+        if c in ("trending", "trend"):
+            return "Trending"
+        if c in ("series",):
+            return "Series"
+        if c in ("anime",):
+            return "Anime"
+        if c in ("documentary", "doc"):
+            return "Documentary"
+        if c in ("movie", "movies"):
+            return "Movie"
+        return (raw or "Movie").strip().title()
+
     items = []
-    items.append({"label": "🎬 Title:", "value": clean_movie_title_for_button(movie['title'])})
+    items.append({"label": "🎬 Title::", "value": style_title(clean_movie_title_for_button(movie.get('title') or 'Movie'))})
     desc = movie.get('description', '')
     if desc:
-        items.append({"label": "📝 Desc:", "value": desc[:40]})
-    items.append({"label": "💳 Price:", "value": f"{price} KES" if price > 0 else "FREE 🎁"})
-    items.append({"label": "🏷️ Category:", "value": movie.get('category', 'movie').title()})
+        items.append({"label": "📝 Desc::", "value": style_sub(str(desc)[:60])})
+    items.append({"label": "💳 Price::", "value": style_title(f"{price} KES") if price > 0 else style_title("FREE 🎁")})
+    items.append({"label": "🏷️ Category::", "value": style_sub(_pretty_category(movie.get('category', 'movie')))})
     _mv_eps = movie.get('episodes', []) or []
     if _mv_eps:
         items.append({"label": "🎬 Movies inside:", "value": ""})
@@ -10859,7 +10878,7 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             _et = clean_movie_title_for_button(_et, max_len=40)
             items.append({"label": f"   {_i}. {_et}", "value": ""})
     
-    caption = render_menu_for_user(user_id, "🎦 𝐌𝐨𝐯𝐢𝐞 𝐈𝐧𝐟𝐨𝐫𝐦𝐚𝐭𝐢𝐨𝐧", items)
+    caption = render_menu_for_user(user_id, style_title("»» 🎬 Movie Information ««"), items)
     caption = add_footer(caption)
     caption += apply_premium_emojis(f"\n\n💳 ᴄʜᴏᴏꜱᴇ ᴘᴀʏᴍᴇɴᴛ ᴍᴇᴛʜᴏᴅ:") + get_datetime_footer()
     
@@ -10880,25 +10899,49 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             photo_ref = await resolve_safe_photo(context.bot, poster_file_id, poster_url, context="movie_detail")
         except Exception:
             photo_ref = None
+        # Extra fallbacks so poster almost never fails
+        if photo_ref is None and poster_file_id:
+            photo_ref = poster_file_id
+        if photo_ref is None and poster_url and str(poster_url).startswith(("http://", "https://", "data:")):
+            photo_ref = poster_url
+        sent_message = None
         if photo_ref is not None:
             try:
-                await query.message.delete()
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
                 sent_message = await send_html_safe(context.bot, user_id, caption, reply_markup=reply_markup, photo=photo_ref)
             except Exception as e:
-                logger.error(f"Failed to send poster in show_movie_detail: {e}")
+                logger.warning(f"poster send failed ({e}); retry alternate sources")
                 sent_message = None
-        if sent_message is None and photo_ref is not None:
-            # Resolved ref failed at send time (race / revoked) — text card, NO blank image
+                for alt in (poster_file_id, poster_url):
+                    if not alt or alt == photo_ref:
+                        continue
+                    try:
+                        sent_message = await send_html_safe(context.bot, user_id, caption, reply_markup=reply_markup, photo=alt)
+                        if sent_message:
+                            break
+                    except Exception:
+                        continue
+        if sent_message is None:
             try:
-                await query.message.delete()
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
             except Exception:
                 pass
-            sent_message = await context.bot.send_message(chat_id=user_id, text=caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-        elif sent_message is None:
             try:
-                sent_message = await query.edit_message_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                sent_message = await context.bot.send_message(chat_id=user_id, text=caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except Exception:
-                sent_message = await query.message.reply_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                try:
+                    sent_message = await query.edit_message_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                except Exception:
+                    try:
+                        sent_message = await query.message.reply_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    except Exception:
+                        sent_message = None
 
     async def _attach_smd_card(_ref=ref, _price=price, _tk=movie_token, _uid=user_id, _plans=plans, _chat=query.message.chat.id if query else update.effective_chat.id, _msg=sent_message):
         try:
