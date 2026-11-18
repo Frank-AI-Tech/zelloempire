@@ -1100,7 +1100,7 @@ def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amo
             lines.append(f"{style_sub('You get')}: {credit} KES")
             lines.append(style_sub("Bonus 20% from 100 KES+"))
         lines.append(f"{style_sub('Send M-Pesa no.')}")
-        lines.append("$ 07XXXXXXXX  or  2547XXXXXXXX")
+        lines.append("07XXXXXXXX  or  2547XXXXXXXX")
         lines.append(style_sub("Enter PIN — funds added"))
     else:
         lines.append(f"📱 {style_title('M-Pesa')}")
@@ -1113,7 +1113,7 @@ def build_mpesa_prompt_text(amount, extra_lines=None, user_id=None, original_amo
                 pass
         lines.append(f"{style_sub('Pay')}: {amt} KES")
         lines.append(f"{style_sub('Send M-Pesa no.')}")
-        lines.append("$ 07XXXXXXXX  or  2547XXXXXXXX")
+        lines.append("07XXXXXXXX  or  2547XXXXXXXX")
         lines.append(style_sub("Enter PIN — delivers"))
     if extra_lines:
         for x in extra_lines:
@@ -4700,11 +4700,9 @@ def next_channel_tap() -> str:
         return "👇"
 
 def decorate_title_list(titles: list, arrow: str = None) -> str:
-    """Prefix every title in THIS album with the SAME arrow (no mix inside one post)."""
+    """Clean numbered list: 1. Title / 2. Title ... (matches channel style)"""
     if not titles:
         return ""
-    # One style for the whole album
-    a = arrow if arrow is not None else next_channel_arrow()
     lines = []
     for t in titles:
         title = str(t).strip()
@@ -4714,7 +4712,7 @@ def decorate_title_list(titles: list, arrow: str = None) -> str:
         while title and title[0] in "⇒➔➧➨➯➮➭➫➺➻➾➩➤➣➜➙➛☛◆◇◈◉●✦✧✯❖⬥⬧◊☑✒❥➠":
             title = title[1:].lstrip()
         title = re.sub(r"^\d+[\).\-:]\s*", "", title)
-        lines.append(f"{a} {len(lines)+1}. {title}")
+        lines.append(f"{len(lines)+1}. {title}")
     return "\n".join(lines)
 
 
