@@ -995,7 +995,7 @@
             const cb = document.getElementById('createBundleBtn');
             if (cb) cb.style.display = selectedMovies.size > 1 ? 'inline-flex' : 'none';
             // Refresh the button-text editor only if the album card is open
-            if (if(typeof updateAlbumTitleFromSelection==='function')updateAlbumTitleFromSelection();document.getElementById('sendAlbumCard').style.display === 'block') updateButtonTextsArea();
+            if (document.getElementById('sendAlbumCard') && document.getElementById('sendAlbumCard').style.display === 'block') updateButtonTextsArea();
         }
         function selectAllVisible(){getFilteredMovies().forEach(m=>selectedMovies.add(m.token));renderMovies(); updateButtonTextsArea();}
         function clearSelection(){selectedMovies.clear();if(typeof updateAlbumTitleFromSelection==='function')updateAlbumTitleFromSelection();document.getElementById('sendAlbumCard').style.display='none';renderMovies(); updateButtonTextsArea();}
@@ -1023,9 +1023,6 @@
             });
             const el=document.getElementById('albumTitle');
             if(el) el.value = titles.map((t,i)=>(i+1)+'. '+t).join('\n');
-        });
-            const el=document.getElementById('albumTitle');
-            if(el) el.value = titles.join(' , ');
         }
         function sendSelectionToChannel(){ if(typeof updateAlbumTitleFromSelection==='function') updateAlbumTitleFromSelection(); return _sendSelectionToChannelOrig(); }
         function _sendSelectionToChannelOrig(){if(!selectedMovies.size){showToast('Select at least one movie first','error');return;}if(typeof updateAlbumTitleFromSelection==='function')updateAlbumTitleFromSelection();document.getElementById('sendAlbumCard').style.display='block';updateButtonTextsArea();fillAlbumTitleFromSelection();document.getElementById('sendAlbumCard').scrollIntoView({behavior:'smooth'});}
@@ -2065,4 +2062,4 @@ function processEditPosterFile(file){
 </div>
 
 </body>
-  </html>
+    </html>
