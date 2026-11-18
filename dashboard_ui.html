@@ -14,67 +14,68 @@
     <meta name="mobile-web-app-capable" content="yes">
     <link rel="manifest" href="/manifest.json">
 
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         :root {
             --bg: #000000;
-            --bg-elevated: #0c0c0e;
-            --bg-card: #101013;
-            --bg-hover: #1a1a20;
-            --border: #232329;
-            --border-focus: #3a3a44;
-            --text-primary: #f4f4f8;
-            --text-secondary: #a0a0b8;
-            --text-muted: #6a6a8a;
+            --bg-elevated: #0a0a0c;
+            --bg-card: #0f0f12;
+            --bg-hover: #18181c;
+            --border: #1e1e24;
+            --border-focus: #2e2e38;
+            --text-primary: #f5f5f7;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
             --accent: #ff3b30;
-            --accent-dim: rgba(255,59,48,0.15);
-            --accent-glow: rgba(255,59,48,0.30);
-            --danger: #ff7675;
-            --danger-dim: rgba(255,118,117,0.15);
-            --warning: #fdcb6e;
-            --warning-dim: rgba(253,203,110,0.15);
-            --gold: #fdcb6e;
-            --gold-dim: rgba(253,203,110,0.15);
-            --green: #2ecc71;
-            --green-dim: rgba(46,204,113,0.15);
-            --teal: #55efc4;
-            --teal-dim: rgba(85,239,196,0.15);
-            --blue: #74b9ff;
-            --blue-dim: rgba(116,185,255,0.15);
-            --radius: 20px;
+            --accent-dim: rgba(255,59,48,0.14);
+            --accent-glow: rgba(255,59,48,0.28);
+            --danger: #ff6b6b;
+            --danger-dim: rgba(255,107,107,0.14);
+            --warning: #fbbf24;
+            --warning-dim: rgba(251,191,36,0.14);
+            --gold: #fbbf24;
+            --gold-dim: rgba(251,191,36,0.14);
+            --green: #22c55e;
+            --green-dim: rgba(34,197,94,0.14);
+            --teal: #2dd4bf;
+            --teal-dim: rgba(45,212,191,0.14);
+            --blue: #60a5fa;
+            --blue-dim: rgba(96,165,250,0.14);
+            --radius: 18px;
             --radius-sm: 14px;
             --radius-xs: 10px;
-            --shadow: 0 2px 12px rgba(0,0,0,0.6);
-            --shadow-lg: 0 8px 32px rgba(0,0,0,0.8);
-            --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --shadow: 0 2px 12px rgba(0,0,0,0.55);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,0.75);
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
         }
         [data-theme="light"] {
             --bg: #ffffff;
-            --bg-elevated: #f8f8fa;
+            --bg-elevated: #f8f9fb;
             --bg-card: #ffffff;
-            --bg-hover: #f0f0f5;
-            --border: #e2e2ea;
-            --border-focus: #d0d0dc;
-            --text-primary: #1a1a2e;
-            --text-secondary: #555570;
-            --text-muted: #8888a0;
-            --accent: #e74c3c;
-            --accent-dim: rgba(231,76,60,0.10);
-            --accent-glow: rgba(231,76,60,0.20);
-            --danger: #e74c3c;
-            --danger-dim: rgba(231,76,60,0.10);
-            --warning: #f39c12;
-            --warning-dim: rgba(243,156,18,0.10);
-            --gold: #f39c12;
-            --gold-dim: rgba(243,156,18,0.10);
-            --green: #27ae60;
-            --green-dim: rgba(39,174,96,0.10);
-            --teal: #1abc9c;
-            --teal-dim: rgba(26,188,156,0.10);
-            --blue: #3498db;
-            --blue-dim: rgba(52,152,219,0.10);
-            --shadow: 0 2px 12px rgba(0,0,0,0.08);
-            --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+            --bg-hover: #f1f3f7;
+            --border: #e5e7eb;
+            --border-focus: #d1d5db;
+            --text-primary: #111827;
+            --text-secondary: #4b5563;
+            --text-muted: #9ca3af;
+            --accent: #e11d48;
+            --accent-dim: rgba(225,29,72,0.09);
+            --accent-glow: rgba(225,29,72,0.18);
+            --danger: #ef4444;
+            --danger-dim: rgba(239,68,68,0.1);
+            --warning: #f59e0b;
+            --warning-dim: rgba(245,158,11,0.1);
+            --gold: #f59e0b;
+            --gold-dim: rgba(245,158,11,0.1);
+            --green: #16a34a;
+            --green-dim: rgba(22,163,74,0.1);
+            --teal: #0d9488;
+            --teal-dim: rgba(13,148,136,0.1);
+            --blue: #2563eb;
+            --blue-dim: rgba(37,99,235,0.1);
+            --shadow: 0 2px 12px rgba(0,0,0,0.06);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,0.1);
         }
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { background: var(--bg); color: var(--text-primary); font-family: var(--font); font-size: 14px; line-height: 1.5; min-height: 100vh; overflow-x: hidden; touch-action: manipulation; }
@@ -1173,11 +1174,12 @@
                         ? '<i class="fas fa-check-circle" style="color:#2ecc71;font-size:18px;margin-right:5px;"></i>'
                         : (st==='FAILED' ? '<i class="fas fa-times-circle" style="color:#ff7675;font-size:16px;margin-right:5px;"></i>' : '<i class="fas fa-clock" style="color:#fdcb6e;font-size:13px;margin-right:5px;"></i>');
                     let itemLabel = p.movie_title || p.title || '';
+                    if((p.is_wallet || p.type==='wallet' || (p.reference||'').toLowerCase().includes('wallet') || (p.reference||'').toLowerCase().includes('topup')) && !itemLabel) itemLabel = 'Wallet Top-up';
                     const titles = Array.isArray(p.titles) ? p.titles.filter(Boolean) : [];
                     if(!itemLabel && titles.length) itemLabel = titles.slice(0,2).join(', ') + (titles.length>2?'…':'');
                     if(!itemLabel && p.is_cart) itemLabel = 'Cart ×' + ((p.cart_tokens||[]).length || '?');
                     if(!itemLabel && p.plan) itemLabel = 'Plan: '+p.plan;
-                    if(!itemLabel) itemLabel = 'Item';
+                    if(!itemLabel){ itemLabel = (p.is_wallet || p.type==='wallet' || (p.reference||'').startswith('WALLET') || (p.reference||'').startswith('wallet')) ? 'Wallet Top-up' : 'Item'; }
                     const detailId = 'pd_'+uid+'_'+idx;
                     const fullList = titles.length ? titles.map((tt,i)=> (i+1)+'. '+tt).join('<br>') : escapeHtml(itemLabel);
                     const hasExpand = titles.length > 1 || (p.cart_tokens||[]).length > 1;
@@ -1841,4 +1843,4 @@ function processEditPosterFile(file){
 </div>
 
 </body>
-</html>
+                                                                                                                                                                                                                                             </html>
